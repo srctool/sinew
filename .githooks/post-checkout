@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Git hook: post-checkout
+# Purpose: When switching branches or checking out updates, keep submodules synced.
+# It checks out the submodule commits this repository records
+# (Dependabot PRs move the pointers).
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+"$REPO_ROOT/scripts/sync-submodules.sh" || true

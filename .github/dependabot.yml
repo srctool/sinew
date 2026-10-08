@@ -1,0 +1,24 @@
+# Dependabot keeps the submodule pointers and the workflow actions up to date by opening PRs.
+version: 2
+updates:
+  # kotlin-lib and dart-lib: follow the branch in .gitmodules (main). One PR for both.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: daily
+    groups:
+      libraries:
+        patterns: ['*']
+    commit-message:
+      prefix: chore(submodules)
+
+  # GitHub Actions used by .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: chore(ci)

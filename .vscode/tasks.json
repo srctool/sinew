@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Docs: sync from design notes",
+      "type": "shell",
+      "command": "python3 scripts/sync_vault.py \"${input:notesPath}\"",
+      "options": {"cwd": "${workspaceFolder}/docs/internal"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Docs: build both sites",
+      "type": "shell",
+      "command": "npm --prefix internal run build && npm --prefix usage run build",
+      "options": {"cwd": "${workspaceFolder}/docs"},
+      "group": "build",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "notesPath",
+      "type": "promptString",
+      "description": "Path to the Sinew design notes (the folder with base/, kotlin/, flutter/)"
+    }
+  ]
+}

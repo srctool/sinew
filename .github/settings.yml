@@ -1,0 +1,10 @@
+# Repository settings for the GitHub Settings app (Probot); it has effect only if the app is installed.
+# Trunk-based: main is the only long-lived branch, and every PR is squash-merged into it.
+repository:
+  default_branch: main
+  allow_merge_commit: false
+  allow_rebase_merge: false
+  allow_squash_merge: true
+  delete_branch_on_merge: true
+  squash_merge_commit_title: PR_TITLE   # Use the PR title for the squashed commit
+  squash_merge_commit_message: PR_BODY  # Use the PR description for the squashed commit

@@ -1,0 +1,40 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Docs (internal): start",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/docs/internal",
+      "command": "npm run start -- --port 3000 --no-open",
+      "serverReadyAction": {"pattern": "(https?://localhost:[0-9]+/?)", "uriFormat": "%s", "action": "openExternally"}
+    },
+    {
+      "name": "Docs (usage): start",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/docs/usage",
+      "command": "npm run start -- --no-open",
+      "serverReadyAction": {"pattern": "(https?://localhost:[0-9]+/?)", "uriFormat": "%s", "action": "openExternally"}
+    },
+    {
+      "name": "Docs (internal): build and serve",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/docs/internal",
+      "command": "npm run build && npm run serve -- --port 3000 --no-open",
+      "serverReadyAction": {"pattern": "(https?://localhost:[0-9]+/?)", "uriFormat": "%s", "action": "openExternally"}
+    },
+    {
+      "name": "Docs (usage): build and serve",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/docs/usage",
+      "command": "npm run build && npm run serve -- --no-open",
+      "serverReadyAction": {"pattern": "(https?://localhost:[0-9]+/?)", "uriFormat": "%s", "action": "openExternally"}
+    }
+  ],
+  "compounds": [
+    {"name": "Docs: both sites", "configurations": ["Docs (internal): start", "Docs (usage): start"]}
+  ]
+}

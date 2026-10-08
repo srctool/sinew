@@ -1,0 +1,8 @@
+[submodule "kotlin-lib"]
+	path = kotlin-lib
+	url = https://github.com/srctool/sinew-kotlin.git
+	branch = main
+[submodule "dart-lib"]
+	path = dart-lib
+	url = https://github.com/srctool/sinew-dart.git
+	branch = main

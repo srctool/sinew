@@ -1,0 +1,130 @@
+/**
+ * CSS files with the .module.css suffix will be treated as CSS modules
+ * and scoped locally.
+ */
+
+.heroBanner {
+  padding: 4rem 0;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2rem;
+  }
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Centered row for the Get Started control */
+.getStartedRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+/* JetBrains-like split button styling */
+.jbSplit {
+  position: relative;
+  display: inline-flex;
+}
+
+.jbBtn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #fff;
+  color: #000;
+  border: none;
+  padding: 0.75rem 1.1rem;
+  font-weight: 700;
+  font-size: 1rem; /* ensure both segments use the same font size */
+  letter-spacing: 0.01em;
+  border-radius: 10px;
+  line-height: 1.2;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease, color 150ms ease;
+  cursor: pointer;
+}
+
+.jbBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.jbBtn:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.jbBtn:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+/* Split specifics */
+.jbLeft {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.jbRight {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--ifm-color-primary);
+  border-left: 1px solid var(--ifm-color-emphasis-300); /* vertical divider */
+}
+
+.jbRight svg {
+  fill: currentColor;
+}
+
+/* Dropdown menu styling matching surface */
+.jbMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  box-shadow: var(--ifm-global-shadow-lw);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.jbMenuItem {
+  display: flex;
+  width: 100%;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  background: transparent;
+  color: var(--ifm-font-color-base);
+  border: 0;
+  text-align: left;
+}
+
+.jbMenuItem + .jbMenuItem {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+/* Language color for selected label on the dropdown trigger: force white */
+.langKotlin {
+  color: var(--ifm-color-primary);
+}
+
+.langDart {
+  color: var(--ifm-color-primary);
+}

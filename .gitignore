@@ -1,0 +1,15 @@
+# Claude Code local settings (preview launch configs)
+.claude/
+
+# Gradle (local state and build output)
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+
+# macOS
+.DS_Store
