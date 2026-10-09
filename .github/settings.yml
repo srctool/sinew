@@ -1,5 +1,5 @@
 # Repository settings for the GitHub Settings app (Probot); it has effect only if the app is installed.
-# Changes apply when this file changes on main.
+# The app (github.com/apps/settings) applies this file each time it changes on main.
 # Trunk-based: main is the only long-lived branch, and every PR is squash-merged into it.
 repository:
   default_branch: main
