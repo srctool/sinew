@@ -12,7 +12,16 @@ const config: Config = {
   favicon: 'img/favicon.ico',
 
   future: {
-    v4: true,
+    // Docusaurus v4 compatibility, minus two flags 3.10 added to `v4: true`:
+    // the generated pages use {#id} heading ids (MDX 1 compat), and the Faster bundler
+    // would need @docusaurus/faster. Turn those on with Docusaurus v4.
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+      useCssCascadeLayers: true,
+      siteStorageNamespacing: true,
+      fasterByDefault: false,
+      mdx1CompatDisabledByDefault: false,
+    },
   },
 
   url: process.env.SINEW_USAGE_URL ?? 'http://localhost:3001',

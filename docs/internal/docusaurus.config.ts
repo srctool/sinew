@@ -14,7 +14,16 @@ const config: Config = {
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
-    v4: true, // Improve compatibility with the upcoming Docusaurus v4
+    // Docusaurus v4 compatibility, minus two flags 3.10 added to `v4: true`:
+    // the generated pages use {#id} heading ids (MDX 1 compat), and the Faster bundler
+    // would need @docusaurus/faster. Turn those on with Docusaurus v4.
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+      useCssCascadeLayers: true,
+      siteStorageNamespacing: true,
+      fasterByDefault: false,
+      mdx1CompatDisabledByDefault: false,
+    },
   },
 
   // Set the production url of your site here
