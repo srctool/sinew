@@ -27,3 +27,17 @@ updates:
         patterns: ['*']
     commit-message:
       prefix: chore(ci)
+
+  # The two Docusaurus sites. Only security updates (no routine version bumps), and all of
+  # them in one PR instead of one PR per vulnerable package.
+  - package-ecosystem: npm
+    directories: ['/docs/internal', '/docs/usage']
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      docs-security:
+        applies-to: security-updates
+        patterns: ['*']
+    commit-message:
+      prefix: chore(docs)
