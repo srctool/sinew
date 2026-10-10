@@ -41,7 +41,7 @@ What kind of failure it is decides who can do something about it: the user (retr
 | 429 | `RateLimitedException` (RTL), with `retryAfter` when the backend sends it | later | "Try again in a moment" |
 | 500, 502 | `ServerException` (SRV) | no | generic error |
 | 503, 504 | `ServiceUnavailableException` (SUN) | yes | generic error, retry |
-| A 2xx envelope with `success: false`, or an error body with a readable message | `ApiErrorException` (AE), with the backend's message | no | the backend's message |
+| A 2xx envelope whose `failure()` is set, or an error body with a readable message | `ApiErrorException` (AE), with the backend's message | no | the backend's message |
 | A non-2xx response whose body can't be read | `UndefinedErrorResponseException` (UER) | no | generic error |
 | JSON that doesn't fit the DTO, or a mapping error in `toDomain()` | `ParseException` (DF) | no | generic error, **reported**: the contract broke |
 | Local storage can't be read or decoded | `LocalStorageCorruptionException` (LSC) | no | treat the cached data as absent |
@@ -81,7 +81,7 @@ flowchart BT
 
 | Layer | Guard | Catches | Hands upward |
 |---|---|---|---|
-| **Source** (one HTTP or storage call) | `processApiCall`, `processOptionalApiCall`, the storage guard | library errors, `success: false`, parse and mapping errors | `Result` with a typed `AppException` |
+| **Source** (one HTTP or storage call) | `processApiCall`, `processOptionalApiCall`, the storage guard | library errors, non-2xx statuses, envelope failures, parse and mapping errors | `Result` with a typed `AppException` |
 | **Data** (repository) | none of its own; every step it runs is already guarded | nothing new | the source guard's `Result`, unchanged |
 | **Domain** (use case, only when one exists) | the use-case guard | its own rule failures (domain exceptions) and bugs in its own code | `Result` |
 | **Presentation** (view model) | **none** | nothing: nothing below it throws | state and effects |
@@ -201,27 +201,40 @@ processCall(module, function, layer, handlers, block): Result<T> =
 ### 1. Why {#kotlin-1-why}
 
 The base error model has two Kotlin-specific traps:
-- **`kotlin.Result` can hold any `Throwable`**, so the guarantee "the failure is always an `AppException`" has to come from the guards.
+- **`kotlin.Result` can hold any `Throwable` and has no message field.** So Sinew has its own `Result`, whose failure is typed `AppException` and whose success carries the envelope's message.
 - **Coroutine cancellation is an exception.** A guard that catches `Throwable` without care swallows `CancellationException`, and a cancelled search then shows an error or keeps running.
 
 This note shows how the Kotlin guards keep both promises.
 
 ### 2. Shape {#kotlin-2-shape}
 
-#### `kotlin.Result`, narrowed by the guards {#kotlin-kotlinresult-narrowed-by-the-guards}
+#### Sinew's `Result` {#kotlin-sinews-result}
+
+```kotlin
+public sealed interface Result<out T> {
+    public data class Success<out T>(val data: T, val message: String = "") : Result<T>
+    public data class Failure(val error: AppException) : Result<Nothing>
+}
+
+public val Result<*>.isSuccess: Boolean
+public val <T> Result<T>.dataOrNull: T?
+public val Result<*>.errorOrNull: AppException?
+public inline fun <T, R> Result<T>.fold(onSuccess: (T) -> R, onFailure: (AppException) -> R): R
+public inline fun <T> Result<T>.onSuccess(action: (T) -> Unit): Result<T>
+public inline fun <T> Result<T>.onFailure(action: (AppException) -> Unit): Result<T>
+public inline fun <T, R> Result<T>.map(transform: (T) -> R): Result<R>      // keeps message
+public fun <T> Result<T>.getOrThrow(): T                                      // throws the AppException
+```
 
 | Rule | Why |
 |---|---|
-| Repositories, use cases and guards return `kotlin.Result<T>` | One result type, from the standard library |
-| Only Sinew's guards build a failed `Result`, and always with an `AppException` | Callers can rely on `exceptionOrNull() as AppException` |
+| Repositories, use cases and guards return Sinew's `Result<T>` | One result type, the same shape as Flutter's |
+| `Failure.error` is typed `AppException` | No `as AppException` casts anywhere |
+| `Success.message` is the envelope's `message()`, or `""` | A success message from the backend reaches the view model, which sends it as an effect |
 | **Never `runCatching`** around suspend calls | It catches `CancellationException` and breaks cancellation |
-| User-facing text comes from `(error as AppException).displayMessage(localizer)` | `kotlin.Result` has no message field. The message lives on the exception. |
+| User-facing error text comes from `error.displayMessage(localizer)` | The message stays a key until the page renders it |
 
-A small extension makes the narrowing explicit:
-
-```kotlin
-public val Result<*>.appException: AppException? get() = exceptionOrNull() as AppException?
-```
+The names `fold`, `onSuccess`, `onFailure`, `map` and `getOrThrow` match `kotlin.Result`, so code reads the same.
 
 #### Cancellation comes first {#kotlin-cancellation-comes-first}
 
@@ -230,16 +243,16 @@ public suspend fun <T> processCall(
     module: String, function: String, layer: ExceptionLayer,
     handlers: List<ExceptionHandler>, block: suspend () -> T,
 ): Result<T> = try {
-    Result.success(block())
+    Result.Success(block())
 } catch (e: CancellationException) {
     currentCoroutineContext().ensureActive()                   // the caller was cancelled: this throws, and cancellation propagates
     classify(e)                                                // the caller is still active: an engine-wrapped timeout, classified below
 } catch (e: AppException) {
-    Result.failure(e)                                          // already translated below
+    Result.Failure(e)                                          // already translated below
 } catch (e: Throwable) {
     classify(e)
 }
-// classify(e) = runHandlers(handlers, e) ?: UnexpectedException(…, cause = e), reported if unexpected or parse, as Result.failure
+// classify(e) = runHandlers(handlers, e) ?: UnexpectedException(…, cause = e), reported if unexpected or parse, as Result.Failure
 ```
 
 | Rule | Why |
@@ -263,13 +276,13 @@ Sinew reports only what its guards catch. An exception that escapes everything (
 |---|---|
 | `ExceptionLayer` | `public enum class ExceptionLayer(public val code: String) { ViewModel("VM"), UseCase("UC"), Repository("R"), Utility("UT") }` |
 | `AppException` | `public abstract class AppException(public val module: String, public val layer: ExceptionLayer, public val function: String, cause: Throwable? = null) : Exception(cause)` with `abstract val typeCode: String`, `abstract val message: ErrorMessage` (named `errorMessage` to avoid `Throwable.message`), `open val retryable: Boolean = false`, `val code: String` |
-| `appException` | `public val Result<*>.appException: AppException?` |
+| `Result<T>` | `public sealed interface Result<out T>` with `Success(data, message = "")` and `Failure(error: AppException)`, plus the helpers above, in `sinew-models` |
 | `processCall` | as above, `public suspend fun <T>` |
 | `processResult` | `public suspend fun <T> processResult(module: String, function: String, layer: ExceptionLayer = ExceptionLayer.UseCase, block: suspend () -> T): Result<T>` |
 
 ### 4. Build steps {#kotlin-4-build-steps}
 
-1. `AppException` with `errorMessage` (not `message`: `Throwable.message` is already a `String?`), and `appException`.
+1. `AppException` with `errorMessage` (not `message`: `Throwable.message` is already a `String?`), and `Result` with its helpers, tested (`map` keeps `message`, `getOrThrow` throws the `AppException`).
 2. `processCall`, tested in `commonTest` with `runTest`:
    - cancelling the caller's job: the `CancellationException` propagates, and nothing is reported;
    - a `CancellationException` thrown by the block while the caller is active (an engine-wrapped timeout): classified, not rethrown;
@@ -288,6 +301,7 @@ Sinew reports only what its guards catch. An exception that escapes everything (
 |---|---|
 | `AppException.message` clashes with `Throwable.message` | Kotlin's `Throwable.message` is a `String?`. The base contract's `message: ErrorMessage` is named **`errorMessage`** on Kotlin. `Throwable.message` returns the English fallback (or the server text), so logs read naturally. |
 | A `TimeoutCancellationException` from `withTimeout` inside a repository | It's a `CancellationException`, so it's rethrown as a cancellation. Repositories use Ktor's own timeouts instead of `withTimeout`. |
+| Sinew's `Result` and `kotlin.Result` share a name | An explicit import of `com.srctool.sinew.models.Result` wins over Kotlin's default import. Sinew's public API never exposes `kotlin.Result`; a Detekt rule enforces it. |
 | Errors on iOS without a recognised `NSError` code | Unmatched: `UnexpectedException`, reported. The report includes the domain and code, so the predicate list can grow. |
 
 :::info[Decided by default (revisit during implementation)]
@@ -312,12 +326,12 @@ Dart has no structured cancellation like Kotlin coroutines. A cancelled Dio requ
 ```dart
 sealed class Result<T> {
   const Result();
-  const factory Result.success(T data, {String message}) = Success<T>;
+  const factory Result.success(T data, {String message}) = Success<T>;   // message defaults to ''
   const factory Result.failure(AppException error, [StackTrace? stackTrace]) = Failure<T>;
 
   R when<R>({required R Function(T data, String message) success, required R Function(AppException error, StackTrace? stackTrace) failure});
   R fold<R>(R Function(T data) onSuccess, R Function(AppException error) onFailure);
-  Result<R> transform<R>(R Function(T data) map);
+  Result<R> transform<R>(R Function(T data) map);   // keeps message
   T requireData();            // the data, or throws the failure's AppException (inside use cases)
 }
 final class Success<T> extends Result<T> { … }

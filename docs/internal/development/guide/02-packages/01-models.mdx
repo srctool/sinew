@@ -15,32 +15,42 @@ Every layer needs a few shared shapes: what a domain model is, what an API paylo
 
 `sinew_models` holds those shapes and nothing else. It depends on no other package. Its central idea is the **self-mapping envelope**:
 - A backend wraps its payloads in a few recurring shapes: one object, a list, a page. Each shape is modelled **once per backend**, generically.
-- Each envelope names the DTO type it parses and the domain type that DTO maps to. The compiler then knows every item has a `toDomain()`, so the envelope maps its payload, **including every item of a list or page**.
+- Each envelope names the remote model it parses and the domain type that remote model maps to. The compiler then knows every item has a `toDomain()`, so the envelope maps its payload, **including every item of a list or page**.
 - One envelope per shape replaces a mapping function per endpoint.
 
 Backends disagree on those shapes, and one app can talk to several. A single backend can even have three different paged shapes. So Sinew ships no concrete envelope with fixed JSON keys. It ships **abstract envelope bases** that do the mapping, and each app declares its own envelopes: the fields, the JSON keys and how its page metadata reads.
 
+The same goes for a success flag and a message. Sinew assumes no `success`, `message` or `errors` key. An envelope has two optional hooks, `failure()` and `message()`, and the app's subclass fills them from its own keys, the way `meta()` reads its own page keys. A backend without those keys declares nothing, and Sinew reads nothing. A non-2xx status fails the call before any envelope is parsed, with the error body read by the app's `ErrorBodyReader` (see [Network](/guide/packages/network)).
+
 ### 2. Shape
+
+#### Terms
+
+| Term | Means |
+|---|---|
+| **response** | the whole HTTP message: status, headers and body |
+| **envelope** | the shape of the body: the wrapper the backend puts around what it returns |
+| **payload** | what the envelope carries: one object, a list or a page. A word for the docs, not a type. |
 
 #### Four kinds of model
 
 | Kind | Base type | Shaped like | Visibility in the app | Example |
 |---|---|---|---|---|
 | **Domain model** | `Domain` | what the app needs, in business language | public | `Order` |
-| **Response DTO** | `Response<D : Domain>` | the JSON the backend sends | private to its data module | `OrderResponse` |
+| **Remote model** | `Remote<D : Domain>` | the JSON the backend sends | private to its data module | `OrderRemote` |
 | **Local entity** | `Entity<D : Domain>` | what's stored on the device | private to its data module | `OrderEntity` |
 | **Request DTO** | none | the JSON the backend accepts | private to its data module | `CreateOrderRequest` |
 
 ```mermaid
 flowchart LR
-    J["JSON"] --> RD["Response DTO"]
+    J["JSON"] --> RD["Remote model"]
     DB["stored row"] --> EN["Entity"]
     RD -- "toDomain()" --> DM["Domain model"]
     EN -- "toDomain()" --> DM
     DM --> REQ["Request DTO, built in the repository"]
 ```
 
-The mapper lives **on the DTO** (`toDomain()`), because the DTO is private and exists only to be mapped. The envelope calls it, so nothing else does.
+The mapper lives **on the remote model or entity** (`toDomain()`), because it's private and exists only to be mapped. The envelope calls it, so nothing else does.
 
 #### Envelopes
 
@@ -48,48 +58,67 @@ Every envelope implements one interface, so one guard processes any of them:
 
 ```
 interface Envelope<R> {
-    success: Boolean = true                    // a backend without a success flag keeps the default
-    message: String = ""
-    errors: Map<String, List<String>>? = null  // field → messages, for validation failures
     toDomain(): R
+    failure(): EnvelopeFailure? = null     // the app reads its own success flag and error keys; null = succeeded
+    message(): String? = null              // the app reads its own message key; null = none
 }
+
+EnvelopeFailure(message: String? = null, fieldErrors: Map<String, List<String>>? = null)
 ```
+
+`toDomain()` is the mapping, done by the bases. The two hooks are for a backend that reports inside a 2xx body:
+- `failure()` reports a failure the HTTP status didn't show (`"success": false`). The guard checks it before `toDomain()` and turns it into `ValidationException` when `fieldErrors` is present, `ApiErrorException` otherwise.
+- `message()` is the backend's text on success. The guard puts it on `Result.Success.message`, and a view model that wants it sends it as an effect.
 
 Sinew provides four abstract bases on top of it. Each implements `toDomain()` once; the app's subclass only declares fields.
 
-| Base | The app's subclass declares | `toDomain()` returns |
+| Base | The app's subclass declares (plus `failure()` and `message()` when its backend has them) | `toDomain()` returns |
 |---|---|---|
-| `ObjectEnvelope<T : Response<D>, D : Domain>` | `data: T?` | `D` (throws `EnvelopeDataMissing` when `data` is null) |
-| `ListEnvelope<T : Response<D>, D : Domain>` | `items: List<T>?` | `List<D>` (null → empty) |
-| `PagedEnvelope<T : Response<D>, D : Domain>` | `items: List<T>?` and `meta(): PagingMetaDomain` | `PagingDomain<D>`: every item mapped, plus the app's meta |
-| `VoidEnvelope` | nothing beyond the interface | nothing (`Unit` / `void`) |
+| `ObjectEnvelope<T : Remote<D>, D : Domain>` | `data: T?` | `D` (throws `EnvelopeDataMissing` when `data` is null) |
+| `ListEnvelope<T : Remote<D>, D : Domain>` | `items: List<T>?` | `List<D>` (null → empty) |
+| `PagedEnvelope<T : Remote<D>, D : Domain>` | `items: List<T>?` and `meta(): PagingMetaDomain` | `PagingDomain<D>`: every item mapped, plus the app's meta |
+| `VoidEnvelope` | nothing | nothing (`Unit` / `void`) |
 
-**Two type parameters, on purpose.** `ObjectEnvelope<T : Response<D>, D : Domain>` names both the DTO and the domain type. The bound tells the compiler that `T.toDomain()` returns `D`. That's what lets `PagedEnvelope` map every item without a mapper argument.
+**Two type parameters, on purpose.** `ObjectEnvelope<T : Remote<D>, D : Domain>` names both the remote model and the domain type. The bound tells the compiler that `T.toDomain()` returns `D`. That's what lets `PagedEnvelope` map every item without a mapper argument.
 
 **`meta()` is where the app reads its own page keys.** One backend says `total_page`, another `max_page`, a third nests it under `metadata.pagination`. Each app envelope turns its keys into the one `PagingMetaDomain` shape.
 
-##### Example 1: a backend with a success flag and a `meta` object
+**Naming.** `Envelope` names Sinew's abstract mapping. An app's concrete classes describe one backend's wire shape and are conventionally suffixed `Response`: `ObjectResponse : ObjectEnvelope`, `ListResponse : ListEnvelope`, `PagedResponse : PagedEnvelope`. A project with several backends or shapes prefixes them (`RecordsPagedResponse`).
+
+##### Example 1: a backend with a success flag, a message and a `meta` object
 
 ```
 // JSON: { "success": true, "message": "", "data": [ … ], "meta": { "page": 1, "limit": 20, "total": 95, "totalPage": 5, "hasNextPage": true } }
 
-class PageMeta(page?, limit?, total?, totalPage?, hasNextPage?)          // the app's meta DTO, every key optional
+class PageMeta(page?, limit?, total?, totalPage?, hasNextPage?)          // the app's meta remote model, every key optional
 
-class ShopPage<T : Response<D>, D : Domain>(
-    success = true, message = "", errors = null,
+class PagedResponse<T : Remote<D>, D : Domain>(
+    @key("success") ok: Boolean? = null,
+    @key("message") text: String? = null,
+    @key("errors") errors: Map<String, List<String>>? = null,
     @key("data") items: List<T>? = null,
     @key("meta") pageMeta: PageMeta? = null,
 ) : PagedEnvelope<T, D>() {
+    failure() = if (ok == false) EnvelopeFailure(text, errors) else null
+    message() = text
     meta() = PagingMetaDomain(
         page = pageMeta?.page ?: 1, limit = pageMeta?.limit ?: 0, total = pageMeta?.total ?: 0,
         totalPage = pageMeta?.totalPage ?: 0, hasNextPage = pageMeta?.hasNextPage ?: false,
     )
 }
 
-class ShopObject<T : Response<D>, D : Domain>(success = true, message = "", errors = null, @key("data") data: T? = null) : ObjectEnvelope<T, D>()
+class ObjectResponse<T : Remote<D>, D : Domain>(
+    @key("success") ok: Boolean? = null, @key("message") text: String? = null,
+    @key("errors") errors: Map<String, List<String>>? = null, @key("data") data: T? = null,
+) : ObjectEnvelope<T, D>() {
+    failure() = if (ok == false) EnvelopeFailure(text, errors) else null
+    message() = text
+}
 ```
 
-##### Example 2: a backend with no success flag, records nested in `data`
+A missing `success` key counts as success (`ok == false` only when the backend says so). The same three keys repeat on every shape this backend has; an app can collect them in one shared remote model of its own.
+
+##### Example 2: records nested in `data`
 
 ```
 // JSON: { "data": { "records": [ … ], "max_page": 5, "total": 95, "page_size": 20, "current_page": 1 } }
@@ -97,7 +126,7 @@ class ShopObject<T : Response<D>, D : Domain>(success = true, message = "", erro
 class RecordsBody<T>(@key("records") records: List<T>?, @key("max_page") maxPage?, @key("total") total?,
                      @key("page_size") pageSize?, @key("current_page") page?)
 
-class RecordsPage<T : Response<D>, D : Domain>(@key("data") body: RecordsBody<T>? = null) : PagedEnvelope<T, D>() {
+class RecordsPagedResponse<T : Remote<D>, D : Domain>(@key("data") body: RecordsBody<T>? = null) : PagedEnvelope<T, D>() {
     items = body?.records
     meta() = PagingMetaDomain(
         page = body?.page ?: 1, limit = body?.pageSize ?: 0, total = body?.total ?: 0, totalPage = body?.maxPage ?: 0,
@@ -106,7 +135,7 @@ class RecordsPage<T : Response<D>, D : Domain>(@key("data") body: RecordsBody<T>
 }
 ```
 
-`success`, `message` and `errors` keep their interface defaults here: this backend signals failure with HTTP status codes only, which the network guard already handles.
+This backend has no success flag or message, so the envelope keeps both hooks at their defaults. Its failures come from HTTP status codes only.
 
 #### Paging shapes
 
@@ -134,23 +163,26 @@ One shape for every backend, whatever its meta fields are called. Paging can be 
 
 | | Kotlin | Flutter |
 |---|---|---|
-| Type | `kotlin.Result<T>` from the standard library | Sinew's own `Result<T>`: `Success(data, message)` / `Failure(error, stackTrace)` |
-| The failure's error | always an `AppException`, guaranteed by the guards | the same |
-| User-facing text | rendered from the exception's `message` at display time (see Exception) | the same |
-| Consuming | `fold`, `onSuccess`, `onFailure`, `getOrThrow` | `when`, `fold`, `transform`, `requireData` |
+| Type | Sinew's own `Result<T>`: `Success(data, message)` / `Failure(error)` | Sinew's own `Result<T>`: `Success(data, message)` / `Failure(error, stackTrace)` |
+| The failure's error | typed `AppException`, no cast | the same |
+| Error text | rendered from the exception's `message` at display time (see Exception) | the same |
+| Success text | `Success.message`: the envelope's `message()`, or `""` | the same |
+| Consuming | `fold`, `onSuccess`, `onFailure`, `map`, `getOrThrow` | `when`, `fold`, `transform`, `requireData` |
+
+Both platforms use Sinew's own `Result`, because `kotlin.Result` has no place for a success message and can hold any `Throwable`. `map` / `transform` keep the message. A use case that composes several calls returns `Success(data)` with an empty message unless it passes one on itself.
 
 **`ViewState<T>`** is what a page renders.
 
 ```
 ViewState<T> =
     Loading(data: T? = null)
-  | Done(data: T, message = "")
+  | Done(data: T)
   | Failed(data: T? = null, error: AppException, stackTrace = null)
 ```
 
 `Loading` and `Failed` can still carry the **previous data**, so a reload or a failed reload doesn't blank the screen. Read the renderable data with `dataOrNull`.
 
-`Failed` keeps the `AppException`, never pre-rendered text: the page renders the message every time it builds, so a language switch updates an error already on screen. `Done(message)` is a success message from the backend, shown as it arrives.
+`Failed` keeps the `AppException`, never pre-rendered text: the page renders the message every time it builds, so a language switch updates an error already on screen. A success message is never state: it's an effect the view model sends (see [Presentation](/guide/packages/presentation)).
 
 | Situation | State |
 |---|---|
@@ -181,8 +213,8 @@ Without `Idle`, `ViewState` maps one-to-one onto Riverpod's `AsyncValue` (`Async
 | Dates, money and IDs become real types in `toDomain()` (an instant in UTC, a money value object) | Domain code never parses strings |
 | DTO field names match the JSON. Domain names match the business. | The DTO documents the wire format; the domain speaks the app's language. |
 | Request DTOs contain only the fields the client may set, and are built in the repository | Nothing server-controlled is sent by mistake, and callers never see request shapes |
-| One DTO per JSON shape. A response DTO is never reused as a request body. | The two contracts change separately |
-| Stored data uses entities, never response DTOs | The storage schema and the API schema change for different reasons |
+| One DTO per JSON shape. A remote model is never reused as a request body. | The two contracts change separately |
+| Stored data uses entities, never remote models | The storage schema and the API schema change for different reasons |
 
 #### What lives here from the error model
 
@@ -201,9 +233,10 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 | Name | Signature (pseudocode) | For |
 |---|---|---|
 | `Domain` | `abstract class Domain` with value equality | marks domain models |
-| `Response<D>` | `abstract class Response<D : Domain> { toDomain(): D }` | API DTOs |
+| `Remote<D>` | `abstract class Remote<D : Domain> { toDomain(): D }` | remote models (what the API sends) |
 | `Entity<D>` | `abstract class Entity<D : Domain> { toDomain(): D }` | stored rows |
-| `Envelope<R>` | `interface { success = true, message = "", errors = null, toDomain(): R }` | anything a guard can process |
+| `Envelope<R>` | `interface { toDomain(): R; failure(): EnvelopeFailure? = null; message(): String? = null }` | anything a guard can process |
+| `EnvelopeFailure` | `(message: String? = null, fieldErrors: Map<String, List<String>>? = null)` | a failure reported inside a 2xx body |
 | `ObjectEnvelope<T, D>` | `abstract { abstract data: T?; toDomain(): D }` | base for one-object envelopes |
 | `ListEnvelope<T, D>` | `abstract { abstract items: List<T>?; toDomain(): List<D> }` | base for list envelopes |
 | `PagedEnvelope<T, D>` | `abstract { abstract items: List<T>?; abstract meta(): PagingMetaDomain; toDomain(): PagingDomain<D> }` | base for paged envelopes |
@@ -214,21 +247,22 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 | `ViewState<T>` | `Loading \| Done \| Failed`, `dataOrNull`, `isLoading` | page rendering |
 | `AppException`, `ExceptionLayer`, `ErrorMessage` | the base contract from the [Error Model](/guide/foundations/error-model) | so `ViewState` and `Result` can carry it |
 | `EnvelopeDataMissing` | a plain error (not an `AppException`) | thrown by an envelope with no payload. The guard maps it to `ParseException`. |
-| `Result<T>` (Flutter) | `Success(data, message = "") \| Failure(error: AppException, stackTrace?)`, `when`, `fold`, `transform`, `requireData()` | operation outcome |
+| `Result<T>` | `Success(data, message = "") \| Failure(error: AppException)` (Flutter adds `stackTrace?`), with the consuming helpers above | operation outcome, on both platforms |
 
 `ObjectEnvelope.toDomain()` with `data == null` throws `EnvelopeDataMissing`. The guard's handler turns that into `ParseException` with its module and function, returns it as a failed `Result`, and reports it.
 
 ### 4. Build steps
 
-1. `Domain` with value equality, `Response`, `Entity`, and the error base contract (`AppException`, `ExceptionLayer`, `EnvelopeDataMissing`).
+1. `Domain` with value equality, `Remote`, `Entity`, and the error base contract (`AppException`, `ExceptionLayer`, `EnvelopeDataMissing`).
 2. `Envelope` and the four abstract bases, with tests on a test-only subclass of each:
    - a full payload;
    - missing optional keys;
-   - `errors` present;
-   - a subclass that relies on the interface defaults (no success flag).
+   - `success: false` with and without `errors` (`failure()` returns them);
+   - `message` present and absent (`message()`);
+   - a subclass that keeps both hooks at their defaults.
 3. `PagingDomain`, `PagingMetaDomain`, `PagingEntity`, with a test that a `PagedEnvelope` subclass maps every item through its own `toDomain()` and returns the subclass's `meta()`.
 4. `ViewState` and its helpers, with tests for `dataOrNull` on each variant.
-5. Flutter only: `Result` and its helpers. `requireData()` throws the failure's `AppException`, so a use case can read results in a straight line.
+5. `Result` and its helpers, on both platforms. `getOrThrow()` / `requireData()` throw the failure's `AppException`, so a use case can read results in a straight line; `map` / `transform` keep `message`.
 6. Write both examples from §2 as test fixtures. They double as the documentation's worked examples.
 
 **Done when**
@@ -241,13 +275,14 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 
 | Case | Decided behavior |
 |---|---|
-| A 2xx response with `success: false` | The envelope parses normally. The guard sees `success == false` and returns `ApiErrorException` with the backend's `message` (`ValidationException` when `errors` is present). |
+| A 2xx response with `success: false` in the body | The app's envelope returns it from `failure()`. The guard throws `ValidationException` when `fieldErrors` is present, `ApiErrorException` with the backend's message otherwise, and never calls `toDomain()`. |
+| A backend with no success flag or message | The envelope keeps both hooks at their defaults. Failures come from HTTP status codes; `Success.message` is `""`. |
+| A success message the page should show | The view model reads `Success.message` and sends it as an effect. It's never stored in `ViewState`. |
 | An object envelope with `data: null` | `toDomain()` throws `EnvelopeDataMissing`. The guard maps it to `ParseException`, then reports and returns it. An endpoint where "no data" is a normal answer uses the optional-read guard instead (404 → `null`, see Network). |
 | A list or paged response with `data: null` | Treated as an empty list. A missing list is not an error. |
 | A paged response without its meta keys | The app's `meta()` falls back to its defaults. With `hasNextPage = false` the list shows one page and stops, so an envelope whose backend omits meta on the last page should compute `hasNextPage` from what it has (for example `page < totalPage`). |
 | An unknown enum value | The DTO's enum falls back to `unknown`. The domain decides what `unknown` means. |
 | A new backend wrapper shape | The app writes one envelope per shape on the abstract bases, or implements `Envelope<R>` directly for anything unusual. Nothing else changes. |
-| A backend with no success flag | The app envelope keeps the interface defaults (`success = true`). Failures come from HTTP status codes, handled by the network guard. |
 | An empty list on a first load | `Done(data: [])`, not `Failed`. The UI decides how to show "empty". |
 
 ## Implementation {#implementation}
@@ -257,7 +292,7 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 ### 1. Why {#kotlin-1-why}
 
 The base note defines the shapes every layer shares. On Kotlin, the envelopes are where most of the care goes:
-- kotlinx.serialization has to parse generic envelopes whose type parameters are bounded by `Response<D>`;
+- kotlinx.serialization has to parse generic envelopes whose type parameters are bounded by `Remote<D>`;
 - an abstract base class's abstract properties have to be serialized from the app's subclass.
 
 This note gives the real types and shows an app envelope end to end.
@@ -269,27 +304,28 @@ This note gives the real types and shows an app envelope end to end.
 ```kotlin
 public interface Domain                                   // a marker: domain models are data classes
 
-public abstract class Response<out D : Domain> { public abstract fun toDomain(): D }
+public abstract class Remote<out D : Domain> { public abstract fun toDomain(): D }
 public abstract class Entity<out D : Domain> { public abstract fun toDomain(): D }
 
 public interface Envelope<out R> {
-    public val success: Boolean get() = true
-    public val message: String get() = ""
-    public val errors: Map<String, List<String>>? get() = null
     public fun toDomain(): R
+    public fun failure(): EnvelopeFailure? = null      // the app's subclass reads its own success flag and error keys
+    public fun message(): String? = null               // the app's subclass reads its own message key
 }
 
-public abstract class ObjectEnvelope<out T : Response<D>, D : Domain> : Envelope<D> {
+public data class EnvelopeFailure(val message: String? = null, val fieldErrors: Map<String, List<String>>? = null)
+
+public abstract class ObjectEnvelope<out T : Remote<D>, D : Domain> : Envelope<D> {
     public abstract val data: T?
     override fun toDomain(): D = data?.toDomain() ?: throw EnvelopeDataMissing()
 }
 
-public abstract class ListEnvelope<out T : Response<D>, D : Domain> : Envelope<List<D>> {
+public abstract class ListEnvelope<out T : Remote<D>, D : Domain> : Envelope<List<D>> {
     public abstract val items: List<T>?
     override fun toDomain(): List<D> = items.orEmpty().map { it.toDomain() }
 }
 
-public abstract class PagedEnvelope<out T : Response<D>, D : Domain> : Envelope<PagingDomain<D>> {
+public abstract class PagedEnvelope<out T : Remote<D>, D : Domain> : Envelope<PagingDomain<D>> {
     public abstract val items: List<T>?
     public abstract fun meta(): PagingMetaDomain
     override fun toDomain(): PagingDomain<D> = PagingDomain(items.orEmpty().map { it.toDomain() }, meta())
@@ -306,13 +342,15 @@ The bases aren't `@Serializable`. The app's subclass is, and it overrides the ab
 
 ```kotlin
 @Serializable
-internal data class ShopPage<T : Response<D>, D : Domain>(
-    @SerialName("success") override val success: Boolean = true,
-    @SerialName("message") override val message: String = "",
-    @SerialName("errors") override val errors: Map<String, List<String>>? = null,
+internal data class PagedResponse<T : Remote<D>, D : Domain>(
+    @SerialName("success") val ok: Boolean? = null,
+    @SerialName("message") val text: String? = null,
+    @SerialName("errors") val errors: Map<String, List<String>>? = null,
     @SerialName("data") override val items: List<T>? = null,
     @SerialName("meta") val pageMeta: PageMeta? = null,
 ) : PagedEnvelope<T, D>() {
+    override fun failure(): EnvelopeFailure? = if (ok == false) EnvelopeFailure(text, errors) else null
+    override fun message(): String? = text
     override fun meta(): PagingMetaDomain = PagingMetaDomain(
         page = pageMeta?.page ?: 1, limit = pageMeta?.limit ?: 0, total = pageMeta?.total ?: 0,
         totalPage = pageMeta?.totalPage ?: 0, hasNextPage = pageMeta?.hasNextPage ?: false,
@@ -321,12 +359,12 @@ internal data class ShopPage<T : Response<D>, D : Domain>(
 
 // the API client: Ktor decodes the generic envelope from the reified type
 internal class OrderApiImpl(private val client: HttpClient) : OrderApi {
-    override suspend fun getOrders(page: Int, query: String): ShopPage<OrderResponse, Order> =
+    override suspend fun getOrders(page: Int, query: String): PagedResponse<OrderRemote, Order> =
         client.get("api/orders") { parameter("page", page); parameter("search", query) }.body()
 }
 ```
 
-`body<ShopPage<OrderResponse, Order>>()` works because Ktor's content negotiation resolves the serializer from the full reified type, including both type arguments. The domain type `Order` is never parsed, but kotlinx.serialization still needs a serializer for each type argument of a generic class. So each domain model gets a **stub serializer** that fails if it's ever used:
+`body<PagedResponse<OrderRemote, Order>>()` works because Ktor's content negotiation resolves the serializer from the full reified type, including both type arguments. The domain type `Order` is never parsed, but kotlinx.serialization still needs a serializer for each type argument of a generic class. So each domain model gets a **stub serializer** that fails if it's ever used:
 
 ```kotlin
 @Serializable(with = Order.Unparsed::class)
@@ -348,14 +386,14 @@ public data class PagingEntity<out T>(val items: List<T> = emptyList(), val meta
 
 public sealed interface ViewState<out T> {
     public data class Loading<out T>(val data: T? = null) : ViewState<T>
-    public data class Done<out T>(val data: T, val message: String = "") : ViewState<T>
+    public data class Done<out T>(val data: T) : ViewState<T>
     public data class Failed<out T>(val data: T? = null, val error: AppException) : ViewState<T>
 }
 public val <T> ViewState<T>.dataOrNull: T?
 public val ViewState<*>.isLoading: Boolean
 ```
 
-Results use `kotlin.Result<T>` (see [Error Model](/guide/foundations/error-model#implementation)).
+Results use Sinew's own `Result<T>`, not `kotlin.Result` (see [Error Model](/guide/foundations/error-model#implementation)).
 
 ### 3. API {#kotlin-3-api}
 
@@ -364,7 +402,8 @@ The table in the base note, with these Kotlin specifics:
 | Name | Kotlin |
 |---|---|
 | `Domain` | `public interface Domain` (marker; domain models are `data class`es) |
-| `Envelope` | `public interface Envelope<out R>` with default getters |
+| `Envelope` | `public interface Envelope<out R>` with `toDomain()` and default `failure()` / `message()` returning `null` |
+| `EnvelopeFailure` | `public data class EnvelopeFailure(message: String?, fieldErrors: Map<String, List<String>>?)` |
 | envelope bases | `public abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope` |
 | `DomainNotParsed<D>` | a `KSerializer<D>` that throws, for the domain type argument of generic envelopes |
 | `ViewState<T>` | `public sealed interface` with `Loading`, `Done`, `Failed` |
@@ -376,10 +415,10 @@ The table in the base note, with these Kotlin specifics:
 2. Fixture tests in `commonTest` with `Json { ignoreUnknownKeys = true; explicitNulls = false }`:
    - a full payload;
    - missing keys;
-   - `errors` present;
-   - a backend with no success flag;
+   - `success: false` with and without `errors`, and `message` present and absent, through `failure()` / `message()`;
+   - a backend with no success flag (both hooks `null`);
    - the records-shaped backend from the base note (`data.records`, `max_page`).
-3. A test that decoding `ShopPage<OrderResponse, Order>` never calls `DomainNotParsed`, and that calling it directly throws.
+3. A test that decoding `PagedResponse<OrderRemote, Order>` never calls `DomainNotParsed`, and that calling it directly throws.
 3a. The broken-envelope tests (Review Focus 3): `data: null` on an object envelope throws `EnvelopeDataMissing` (which the guard turns into a reported `ParseException`, tested in Network), and a DTO with an unknown enum value decodes to `Unknown` with `SinewJson`.
 4. `ViewState`, `dataOrNull`, `isLoading`, with tests.
 
@@ -422,22 +461,26 @@ abstract class Domain {
   @override int get hashCode => Object.hashAll(props);
 }
 
-abstract class Response<D extends Domain> { const Response(); D toDomain(); }
+abstract class Remote<D extends Domain> { const Remote(); D toDomain(); }
 abstract class Entity<D extends Domain> { const Entity(); D toDomain(); }
 
 abstract interface class Envelope<R> {
-  bool get success;          // the bases default it to true
-  String get message;        // default ''
-  Map<String, List<String>>? get errors;
   R toDomain();
+  EnvelopeFailure? failure();   // the bases return null
+  String? message();            // the bases return null
 }
 
-abstract class ObjectEnvelope<T extends Response<D>, D extends Domain> implements Envelope<D> {
+class EnvelopeFailure {
+  const EnvelopeFailure({this.message, this.fieldErrors});
+  final String? message;
+  final Map<String, List<String>>? fieldErrors;
+}
+
+abstract class ObjectEnvelope<T extends Remote<D>, D extends Domain> implements Envelope<D> {
   const ObjectEnvelope();
   T? get data;
-  @override bool get success => true;
-  @override String get message => '';
-  @override Map<String, List<String>>? get errors => null;
+  @override EnvelopeFailure? failure() => null;
+  @override String? message() => null;
   @override D toDomain() => data?.toDomain() ?? (throw const EnvelopeDataMissing());
 }
 // ListEnvelope (items), PagedEnvelope (items + meta()), VoidEnvelope follow the same pattern.
@@ -449,17 +492,20 @@ abstract class ObjectEnvelope<T extends Response<D>, D extends Domain> implement
 
 ```dart
 @JsonSerializable(genericArgumentFactories: true, createToJson: false)
-class ShopPage<T extends Response<D>, D extends Domain> extends PagedEnvelope<T, D> {
-  const ShopPage({this.success = true, this.message = '', this.errors, this.items, this.pageMeta});
+class PagedResponse<T extends Remote<D>, D extends Domain> extends PagedEnvelope<T, D> {
+  const PagedResponse({this.ok, this.text, this.errors, this.items, this.pageMeta});
 
-  factory ShopPage.fromJson(Map<String, dynamic> json, T Function(Object? json) fromJsonT, D Function(Object? json) fromJsonD) =>
-      _$ShopPageFromJson(json, fromJsonT, fromJsonD);
+  factory PagedResponse.fromJson(Map<String, dynamic> json, T Function(Object? json) fromJsonT, D Function(Object? json) fromJsonD) =>
+      _$PagedResponseFromJson(json, fromJsonT, fromJsonD);
 
-  @override final bool success;
-  @override final String message;
-  @override final Map<String, List<String>>? errors;
+  @JsonKey(name: 'success') final bool? ok;
+  @JsonKey(name: 'message') final String? text;
+  @JsonKey(name: 'errors') final Map<String, List<String>>? errors;
   @override @JsonKey(name: 'data') final List<T>? items;
   @JsonKey(name: 'meta') final PageMeta? pageMeta;
+
+  @override EnvelopeFailure? failure() => ok == false ? EnvelopeFailure(message: text, fieldErrors: errors) : null;
+  @override String? message() => text;
 
   @override
   PagingMetaDomain meta() => PagingMetaDomain(
@@ -486,7 +532,7 @@ sealed class ViewState<T> {
   bool get isLoading => this is Loading<T>;
 }
 final class Loading<T> extends ViewState<T> { const Loading([this.data]); final T? data; … }
-final class Done<T> extends ViewState<T> { const Done(this.data, {this.message = ''}); final T data; final String message; … }
+final class Done<T> extends ViewState<T> { const Done(this.data); final T data; … }
 final class Failed<T> extends ViewState<T> { const Failed(this.error, {this.data, this.stackTrace}); final AppException error; final T? data; final StackTrace? stackTrace; … }
 ```
 
@@ -499,7 +545,8 @@ As the base note, with these Dart specifics:
 | Name | Dart |
 |---|---|
 | `Domain` | `abstract class Domain` with `props`, `==`, `hashCode` |
-| envelope bases | `abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope` with default `success`, `message`, `errors` getters |
+| envelope bases | `abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope`, mapping plus `failure()` / `message()` returning `null` |
+| `EnvelopeFailure` | `class EnvelopeFailure({String? message, Map<String, List<String>>? fieldErrors})` |
 | `EnvelopeDataMissing` | `class EnvelopeDataMissing implements Exception` |
 | `unreachableDomainFromJson` | `Never unreachableDomainFromJson(Map<String, dynamic> json)` |
 | `ViewState<T>` | `sealed class` with `Loading`, `Done`, `Failed` |
@@ -524,7 +571,7 @@ As the base note, with these Dart specifics:
 
 :::info[Decided by default (revisit during implementation)]
 
-- **Abstract getters with defaults on the bases**, so an app's envelope overrides only what its backend sends.
+- **Abstract getters on the bases** (`data`, `items`), so an app's envelope declares only the fields its backend sends, under its own JSON keys. `failure()` and `message()` are methods, not getters, so a subclass's `message` field never collides with them.
 
 :::
 

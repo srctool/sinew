@@ -24,7 +24,7 @@ It pairs with Camouflage:
 
 ```mermaid
 flowchart TB
-    JSON["JSON / database rows"] --> R["Response DTO or Entity (data)"]
+    JSON["JSON / database rows"] --> R["Remote model or Entity (data)"]
     R --> E["Envelope: maps the payload and every item"]
     E -- "processApiCall / processStorageCall" --> RES["Result of a Domain model or PagingDomain (domain)"]
     RES --> UC["use case, only when one is needed"]
@@ -32,7 +32,7 @@ flowchart TB
     VS -. "sinew_camouflage (optional)" .-> C["CamoPagedListState (Camouflage UI)"]
 ```
 
-- **Envelopes that map themselves.** Each envelope names its DTO type and its domain type. The compiler then knows every item has a `toDomain()`, so the envelope maps the payload, including every item of a list or page. No repository writes a mapper function.
+- **Envelopes that map themselves.** Each envelope names its remote model and its domain type. The compiler then knows every item has a `toDomain()`, so the envelope maps the payload, including every item of a list or page. No repository writes a mapper function.
 - **Errors caught where they happen.** Each layer's guard turns failures into a typed `AppException` with a `module-layer-function-type` code (`ORD-R-GO-NIC`), and hands a `Result` upward. View models never `try`/`catch`.
 - **Presentation: page, event, action, effect, state.**
   - A page sends **events**.
@@ -46,7 +46,7 @@ flowchart TB
 
 | Package | Holds |
 |---|---|
-| `sinew_models` | `Domain`, `Response`, `Entity`, `Envelope` and four abstract envelope bases, `PagingDomain`, `ViewState`; on Flutter also `Result` |
+| `sinew_models` | `Domain`, `Remote`, `Entity`, `Envelope` and four abstract envelope bases, `PagingDomain`, `ViewState`; on Flutter also `Result` |
 | `sinew_exception` | `AppException` and its codes, handler lists, the guards, `CrashReporter` |
 | `sinew_paging` | `Pager<T>`, `PagingState<T>`, `LoadType`, four paging strategies |
 | `sinew_presentation` | the Event → Action → State + Effect base class, `EffectEmitter` (framework-neutral) |
@@ -193,7 +193,7 @@ Package root: `com.srctool.sinew.<module>` (`com.srctool.sinew.paging`, `com.src
 | Base | Kotlin |
 |---|---|
 | [Architecture](/guide/foundations/architecture) | [Architecture](/guide/foundations/architecture#implementation) (`api` vs `implementation`, Koin wiring) |
-| [Error Model](/guide/foundations/error-model) | [Error Model](/guide/foundations/error-model#implementation) (`kotlin.Result`, cancellation) |
+| [Error Model](/guide/foundations/error-model) | [Error Model](/guide/foundations/error-model#implementation) (Sinew's `Result`, cancellation) |
 | [Models](/guide/packages/models) | [Models](/guide/packages/models#implementation) |
 | [Exception](/guide/packages/exception) | [Exception](/guide/packages/exception#implementation) (+ `sinew-l10n`) |
 | [Paging](/guide/packages/paging) | [Paging](/guide/packages/paging#implementation) |
@@ -214,7 +214,7 @@ Package root: `com.srctool.sinew.<module>` (`com.srctool.sinew.paging`, `com.src
 1. **`explicitApi()`** in every library module: every public declaration says `public`, so the API surface is deliberate and the ABI dump readable.
 2. **`commonMain` first.** `expect`/`actual` only where a platform really differs: the HTTP engine, secure storage, crypto keys, biometrics, the network checker, uncaught-error hooks.
 3. **Suspend functions, not callbacks.** Repository-facing APIs are `suspend`. Streams are `Flow`. A long-running operation runs in the caller's scope.
-4. **`kotlin.Result`** everywhere, built only by Sinew's guards. `runCatching` is never used around suspend calls, because it swallows `CancellationException`.
+4. **Sinew's own `Result`** everywhere (not `kotlin.Result`), built only by Sinew's guards. `runCatching` is never used around suspend calls, because it swallows `CancellationException`.
 5. **Hand-written sealed types**, no code generation. `ViewState`, `PagingState`, `ErrorMessage` and the exception types are `sealed` classes or interfaces.
 6. **No DI in libraries.** Constructors and factories only. Koin wiring is an app concern, shown in the Architecture note.
 7. **Compose only where it's needed.** The four modules listed in the toolchain table. Everything else is plain Kotlin and works in a non-Compose app.

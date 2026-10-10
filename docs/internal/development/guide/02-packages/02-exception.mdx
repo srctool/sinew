@@ -40,7 +40,7 @@ A failure's text comes from one of two places, and Sinew never mixes them:
 
 | Source | When | Localized by | Sinew's part |
 |---|---|---|---|
-| **The backend** | the failure arrived as a response with a readable message: `success: false`, an error body with a message, validation field messages | **the backend**, from the request's `Accept-Language` header | send `Accept-Language` from the app's current locale (Network), and show the backend's text unchanged |
+| **The backend** | the failure arrived as a response with a readable message: an envelope `failure()`, an error body with a message, validation field messages | **the backend**, from the request's `Accept-Language` header | send `Accept-Language` from the app's current locale (Network), and show the backend's text unchanged |
 | **Local** | Sinew or the app decided it: no connection, timeout, parse error, storage error, polling or retry gave up, an unexpected bug, an HTTP status with no readable message, a domain rule | **the app's UI layer**, from a message key and arguments | provide the key and arguments. `sinew_l10n` ships English and Indonesian for every built-in key. |
 
 ```
@@ -154,7 +154,7 @@ processCall(module, function, layer, handlers, block): Result<T> =
         Result.failure(mapped)
 ```
 
-On Flutter, `Result.failure` carries `error = mapped` and the stack trace. On Kotlin it's `Result.failure(mapped)`. Neither carries pre-rendered text.
+On Flutter, `Result.failure` carries `error = mapped` and the stack trace. On Kotlin it's `Result.Failure(mapped)`; the exception holds its own stack trace. Neither carries pre-rendered text. A success is `Success(data)` with an empty message; only `processApiCall` sets one, from the envelope.
 
 `processCall` is **public**, so an app can guard calls Sinew doesn't know about, such as a third-party SDK call, with its own handler list and the same codes.
 
@@ -250,7 +250,7 @@ This is the one documented global in Sinew. Tests install a recording reporter a
 
 | Case | Decided behavior |
 |---|---|
-| A 2xx envelope with `success: false` | Network's `processApiCall` throws `ApiErrorException` with `Server(envelope.message)`, or `ValidationException` when `errors` is present. It's an `AppException`, so `processCall` passes it through. |
+| A 2xx envelope whose `failure()` is set | Network's `processApiCall` throws `ApiErrorException` with `Server(failure.message)`, or `ValidationException` when `fieldErrors` is present. It's an `AppException`, so `processCall` passes it through. |
 | A backend error with an empty `message` | Treated as "not readable": the type's local key is used. An `ApiErrorException` with an empty message falls back to `sinew.error.generic`. |
 | The backend ignores `Accept-Language` | Its text is shown as it arrives. Sinew doesn't translate server text. |
 | The app's language changes while a request is in flight | The request carries the old `Accept-Language`. Its server message arrives in the old language; the next request uses the new one. Local messages render in the new language immediately. |

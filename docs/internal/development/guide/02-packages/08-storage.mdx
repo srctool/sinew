@@ -90,7 +90,7 @@ getCachedOrder(id) = processStorageCall("ORD", "GCO", Read) { local.find(id)?.to
 
 | Rule | Why |
 |---|---|
-| Stored data uses entities, never response DTOs | The storage schema and the API schema change for different reasons |
+| Stored data uses entities, never remote models | The storage schema and the API schema change for different reasons |
 | An entity records when it was stored (`cachedAt`) | Whoever decides freshness (a use case) needs it |
 | A local source has no logic: find, put, delete, query | Like an API client, it's a contract. Mapping and errors go through the storage guard. |
 | Where to cache, for how long, and what to do offline is decided in a use case, never in a local source or a repository | The data layer stores; the domain layer decides |

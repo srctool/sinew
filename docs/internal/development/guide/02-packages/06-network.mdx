@@ -129,14 +129,17 @@ The check and the write happen under one lock, so no ordering of `clear()` and a
 
 ```
 processApiCall(module, function, call: () -> Envelope<R>): Result<R> =
+    message = ""
     processCall(module, function, Repository, apiHandlers(module, function)) {
-        envelope = call()
-        if not envelope.success:
-            throw envelope.errors != null
-                ? ValidationException(module, Repository, function, fieldErrors = envelope.errors, message = serverOrLocal(envelope.message, "sinew.error.validation"))
-                : ApiErrorException(module, Repository, function, message = serverOrLocal(envelope.message, "sinew.error.generic"))
+        envelope = call()                                      // a non-2xx status already threw, with the error body read by ErrorBodyReader
+        failure = envelope.failure()                           // null unless the app's envelope maps a failure inside a 2xx body
+        if failure != null:
+            throw failure.fieldErrors != null
+                ? ValidationException(module, Repository, function, fieldErrors = failure.fieldErrors, message = serverOrLocal(failure.message, "sinew.error.validation"))
+                : ApiErrorException(module, Repository, function, message = serverOrLocal(failure.message, "sinew.error.generic"))
+        message = envelope.message() ?: ""
         envelope.toDomain()                                    // inside the guard: a mapping bug becomes ParseException
-    }
+    }.withMessage(message)                                     // a success becomes Success(data, message); a failure is unchanged
 
 processOptionalApiCall(module, function, call): Result<R?>    // the same, except a 404 is success(null)
 
@@ -210,7 +213,7 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 ### 4. Build steps
 
 1. `SinewConfig`, `TokenSource`, `RefreshOutcome`, `ErrorBodyReader` with its default, and tests that the default reader:
-   - reads `message` and `errors`;
+   - reads `message` and `errors` from an error body;
    - returns null for HTML, empty or non-JSON bodies.
 2. The timeout and headers layers, tested against a mock server:
    - read and write deadlines;
@@ -229,7 +232,7 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
    - a cross-host redirect drops `Authorization`;
    - a request to another host never gets a token;
    - sign-out during a refresh fails the queue and leaves no state behind.
-4. `processApiCall` and `processOptionalApiCall`, with one test per handler row. That includes `success: false` with and without `errors`, a 404 on the optional variant, a 429 with `Retry-After` in seconds and as a date, and an HTML 502 page.
+4. `processApiCall` and `processOptionalApiCall`, with one test per handler row. That includes a 400/422 error body with and without field errors, an envelope whose `failure()` is set (with and without `fieldErrors`), `Success.message` from `message()`, a 404 on the optional variant, a 429 with `Retry-After` in seconds and as a date, and an HTML 502 page.
 5. `retryWithBackoff` and `poll` with a virtual clock. Tests:
    - attempts and delays;
    - a non-retryable failure stops at once;
@@ -268,7 +271,8 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 | A 429 with `Retry-After` | `RateLimitedException.retryAfter` is set, and the message names the wait. `retryWithBackoff` waits at least that long. |
 | A redirect | GET redirects are followed within the same host. A redirect to another host is followed without the `Authorization` header. |
 | A 502 whose body is an HTML page from a proxy | The error-body reader returns null, so the message is the local `sinew.error.server`. |
-| An empty `message` on `success: false` | Treated as unreadable: the local generic message is shown. |
+| An error body with an empty `message` | Treated as unreadable: the local message for the status is shown. |
+| An envelope `failure()` with an empty message | The same: the local generic (or validation) message is shown. |
 | The app's language changes mid-request | That request carries the old `Accept-Language`. The next one uses the new locale. |
 | An absolute URL to another host (a CDN image, a pre-signed upload) | No `Authorization` header is attached. |
 
@@ -392,12 +396,15 @@ public class SessionTokenSource(private val store: RefreshTokenStore, private va
 Reading a response body is a `suspend` call, but handlers are plain functions. So the client's response validator reads a failed response's body with **its own** `errorBodyReader` and throws a plain `HttpStatusError(status, errorBody, retryAfter)`. The guard's handlers only classify it by status:
 
 ```kotlin
-public suspend fun <R> processApiCall(module: String, function: String, call: suspend () -> Envelope<R>): Result<R> =
-    processCall(module, function, ExceptionLayer.Repository, apiHandlers(module, function)) {
+public suspend fun <R> processApiCall(module: String, function: String, call: suspend () -> Envelope<R>): Result<R> {
+    var message = ""
+    return processCall(module, function, ExceptionLayer.Repository, apiHandlers(module, function)) {
         val envelope = call()                                                    // a failed status already threw HttpStatusError
-        if (!envelope.success) throw envelope.toApiError(module, function)       // ValidationException or ApiErrorException
+        envelope.failure()?.let { throw it.toAppException(module, function) }   // ValidationException or ApiErrorException
+        message = envelope.message().orEmpty()
         envelope.toDomain()
-    }
+    }.withMessage(message)
+}
 ```
 
 `apiHandlers` follows the base table. The connection and timeout predicates are `expect` functions, because each engine throws its own types:
@@ -637,12 +644,17 @@ The check and the write happen inside one critical section, and `clear()` takes 
 #### The guard {#dart-the-guard}
 
 ```dart
-Future<Result<R>> processApiCall<R>(String module, String function, Future<Envelope<R>> Function() call) =>
-    processCall(module, function, ExceptionLayer.repository, apiHandlers(module, function), () async {
-      final envelope = await call();
-      if (!envelope.success) throw envelope.toApiError(module, function);
-      return envelope.toDomain();
-    });
+Future<Result<R>> processApiCall<R>(String module, String function, Future<Envelope<R>> Function() call) async {
+  var message = '';
+  final result = await processCall(module, function, ExceptionLayer.repository, apiHandlers(module, function), () async {
+    final envelope = await call();   // a failed status already threw, with the HttpStatusError attached
+    final failure = envelope.failure();
+    if (failure != null) throw failure.toAppException(module, function);   // ValidationException or ApiErrorException
+    message = envelope.message() ?? '';
+    return envelope.toDomain();
+  });
+  return result.withMessage(message);
+}
 ```
 
 `apiHandlers` over Dio's error types:

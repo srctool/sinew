@@ -269,7 +269,7 @@ public suspend fun load(type: LoadType, current: PagingState<T>, query: String, 
             succeeded = result.isSuccess
             result.fold(
                 onSuccess = { page -> update(PagingState(ViewState.Done(strategy.normalize(merge(previous, page, type))), type)) },
-                onFailure = { error -> update(PagingState(ViewState.Failed(previous, error as AppException), type)) },
+                onFailure = { error -> update(PagingState(ViewState.Failed(previous, error), type)) },
             )
         }
     } catch (e: CancellationException) {
