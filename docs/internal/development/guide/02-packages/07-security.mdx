@@ -90,7 +90,7 @@ Which fields are personal, when biometrics are offered, how long a session lives
 |---|---|---|
 | `FieldCipher` | `encrypt(plain, context = ""): String`, `decrypt(cipher, context = ""): String` | field-level encryption |
 | `FieldCipher.create` | `FieldCipher.create(keyAlias = "sinew.field", …platform options)` | the platform implementation, creating its data key on first use |
-| `DecryptionFailed` | a plain error (not an `AppException`) | thrown by `decrypt`; the storage guard maps it |
+| `DecryptionFailed` | a plain error (not an `SinewException`) | thrown by `decrypt`; the storage guard maps it |
 | `BiometricVault` | `availability()`, `store(secret)`, `unlock(reason): BiometricUnlock`, `disable()` | a biometric-protected secret |
 | `BiometricUnlock` | `Unlocked(secret) \| Failed(reason: BiometricFailure)` | the outcome of `unlock` |
 | `BiometricVault.create` | `BiometricVault.create(keyAlias = "sinew.biometric", clearOnReinstall = true, …platform options)` | the platform implementation. Like `SecureStore`, it deletes its item on the first use after an install, so a reinstalled app never unlocks the previous install's session. |

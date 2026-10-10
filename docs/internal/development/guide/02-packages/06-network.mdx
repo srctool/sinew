@@ -44,7 +44,7 @@ interface TokenSource {
     clear()                                   // the session ended: drop tokens, void any refresh still running, tell the app's session service
 }
 
-RefreshOutcome = Refreshed | Rejected | Unavailable(cause: AppException)
+RefreshOutcome = Refreshed | Rejected | Unavailable(cause: SinewException)
 //  Rejected:    the backend refused the refresh token, or the session ended while refreshing → the session is over
 //  Unavailable: the refresh couldn't be completed (offline, timeout, 5xx) → the session is kept
 
@@ -52,7 +52,7 @@ RefreshOutcome = Refreshed | Rejected | Unavailable(cause: AppException)
 class SessionTokenSource(store: RefreshTokenStore, call: RefreshCall) : TokenSource
 interface RefreshTokenStore { read(): String?, write(token: String), delete() }     // the app adapts its SecureStore in one line
 interface RefreshCall { refresh(refreshToken: String): RefreshResult }               // the app's backend call, on a client without the auth layer
-RefreshResult = Tokens(access: String, refresh: String) | Rejected | Unavailable(cause: AppException)
+RefreshResult = Tokens(access: String, refresh: String) | Rejected | Unavailable(cause: SinewException)
 
 interface ErrorBodyReader { read(status: Int, body: String?): ErrorBody? }
 ErrorBody(message: String?, fieldErrors: Map<String, List<String>>?)
@@ -338,7 +338,7 @@ internal val SinewAuth = createClientPlugin("SinewAuth", ::SinewAuthConfig) {
             RefreshOutcome.Refreshed -> execute(request.apply {
                 attributes.put(Replayed, Unit); headers.remove(HttpHeaders.Authorization); cfg.source.accessToken()?.let { bearerAuth(it) } })
             RefreshOutcome.Rejected -> { cfg.source.clear(); throw SessionRejected() }
-            is RefreshOutcome.Unavailable -> throw outcome.cause                               // already an AppException: passes through
+            is RefreshOutcome.Unavailable -> throw outcome.cause                               // already an SinewException: passes through
         }
     }
 }
@@ -400,7 +400,7 @@ public suspend fun <R> processApiCall(module: String, function: String, call: su
     var message = ""
     return processCall(module, function, ExceptionLayer.Repository, apiHandlers(module, function)) {
         val envelope = call()                                                    // a failed status already threw HttpStatusError
-        envelope.failure()?.let { throw it.toAppException(module, function) }   // ValidationException or ApiErrorException
+        envelope.failure()?.let { throw it.toSinewException(module, function) }   // ValidationException or ApiErrorException
         message = envelope.message().orEmpty()
         envelope.toDomain()
     }.withMessage(message)
@@ -649,7 +649,7 @@ Future<Result<R>> processApiCall<R>(String module, String function, Future<Envel
   final result = await processCall(module, function, ExceptionLayer.repository, apiHandlers(module, function), () async {
     final envelope = await call();   // a failed status already threw, with the HttpStatusError attached
     final failure = envelope.failure();
-    if (failure != null) throw failure.toAppException(module, function);   // ValidationException or ApiErrorException
+    if (failure != null) throw failure.toSinewException(module, function);   // ValidationException or ApiErrorException
     message = envelope.message() ?? '';
     return envelope.toDomain();
   });
@@ -661,7 +661,7 @@ Future<Result<R>> processApiCall<R>(String module, String function, Future<Envel
 
 | `DioException` | Produces |
 |---|---|
-| `error` is an `AppException` (from the auth interceptor) | that exception, unchanged |
+| `error` is an `SinewException` (from the auth interceptor) | that exception, unchanged |
 | `type == cancel` with the reason `DeadlineExceeded` | `RequestTimeOutException` |
 | `type == cancel`, any other reason | `CancelException` |
 | `connectionTimeout`, `sendTimeout`, `receiveTimeout` | `RequestTimeOutException` |

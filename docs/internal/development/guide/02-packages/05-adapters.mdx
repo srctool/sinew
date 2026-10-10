@@ -56,7 +56,7 @@ Conversions with Riverpod's `AsyncValue`. `ViewState` is modelled on it, so an `
 |---|---|
 | `AsyncLoading`, previous value kept | `Loading(data: previous)` |
 | `AsyncData(value)` | `Done(data)` |
-| `AsyncError(error, stackTrace)`, previous value kept | `Failed(data: previous, error, stackTrace)`. An error that isn't an `AppException` becomes `UnexpectedException` with layer `VM`. |
+| `AsyncError(error, stackTrace)`, previous value kept | `Failed(data: previous, error, stackTrace)`. An error that isn't an `SinewException` becomes `UnexpectedException` with layer `VM`. |
 
 The mapping is one-to-one in both directions. `ViewState.toAsyncValue()` drops `Done`'s backend message, which `AsyncValue` has no place for.
 
@@ -119,7 +119,7 @@ class OrderListViewModel(orders, cancelOrder) : EventActionViewModel<OrderListSt
    - events in, state out;
    - effects delivered once;
    - disposing the provider disposes the emitter.
-4. `toViewState` / `toAsyncValue`, tested for every row of the conversion table, including a non-`AppException` error.
+4. `toViewState` / `toAsyncValue`, tested for every row of the conversion table, including a non-`SinewException` error.
 5. The hooks, tested in widget tests: `useOnOpened` sends once across rebuilds, and `useEffects` cancels on unmount.
 6. The ready providers, tested so that a missing `sinewConfigProvider` override fails with a clear message naming the provider.
 
