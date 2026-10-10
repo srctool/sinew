@@ -25,14 +25,14 @@ The HTTP and storage guards live in Network and Storage. They're thin layers ove
 
 ```mermaid
 flowchart LR
-    M["sinew_models: AppException, ExceptionLayer, ErrorMessage, EnvelopeDataMissing"] --> E["sinew_exception: types, ExceptionHandler, processCall, use-case guard, CrashReporter, Localizer"]
+    M["sinew_models: SinewException, ExceptionLayer, ErrorMessage, EnvelopeDataMissing"] --> E["sinew_exception: types, ExceptionHandler, processCall, use-case guard, CrashReporter, Localizer"]
     E --> N["sinew_network: processApiCall + HTTP handlers, Accept-Language"]
     E --> S["sinew_storage: storage guard + storage handlers"]
     E --> L["sinew_l10n (optional): English and Indonesian for the local messages"]
     E --> APP["the app: use cases, its own domain exceptions and their translations"]
 ```
 
-The `AppException` base, `ExceptionLayer` and `ErrorMessage` live in `sinew_models`, so `ViewState` and `Result` can carry them without a dependency cycle. Everything else about errors lives here.
+The `SinewException` base, `ExceptionLayer` and `ErrorMessage` live in `sinew_models`, so `ViewState` and `Result` can carry them without a dependency cycle. Everything else about errors lives here.
 
 #### Who provides the message
 
@@ -49,10 +49,10 @@ ErrorMessage =
     Server(text: String)                                            // shown as is
   | Local(key: String, args: Map<String, Any> = {}, fallback: String) // resolved at render time
 
-AppException { …, message: ErrorMessage }
+SinewException { …, message: ErrorMessage }
 ```
 
-**Why keys, resolved at render time.** An exception is created in the data layer, which has no locale and no UI context. If it carried finished text, that text would be frozen in the page state: switching the app's language would leave an error on screen in the old language. So a local message stays a key plus arguments until the page renders it. `ViewState.Failed` and `Result.failure` keep the `AppException`, never pre-rendered text.
+**Why keys, resolved at render time.** An exception is created in the data layer, which has no locale and no UI context. If it carried finished text, that text would be frozen in the page state: switching the app's language would leave an error on screen in the old language. So a local message stays a key plus arguments until the page renders it. `ViewState.Failed` and `Result.failure` keep the `SinewException`, never pre-rendered text.
 
 **Arguments and plurals.** Keys take named arguments, `{ "seconds": 30 }` or `{ "attempts": 3 }`. Translations use each platform's plural rules (ICU messages in Flutter ARB files, `plurals` in Compose resources), so "1 second" and "30 seconds" both read correctly.
 
@@ -90,7 +90,7 @@ Every type takes `module`, `layer`, `function` and an optional `cause` from the 
 An app's domain exception is local by nature, so it carries a key in the app's own namespace and its own translations:
 
 ```
-class OrderNotCancellableException(module, function, reason) : AppException(module, UseCase, function) {
+class OrderNotCancellableException(module, function, reason) : SinewException(module, UseCase, function) {
     typeCode = "ONC"
     message  = Local(key = "orders.error.notCancellable", args = { "reason": reason.name },
                      fallback = "This order can no longer be cancelled.")
@@ -116,7 +116,7 @@ error.displayMessage(localizer: Localizer?): String =
 
 | Rule | Why |
 |---|---|
-| Pages render with `displayMessage(localizer)` every time they build, from the `AppException` in state | A language switch updates errors already on screen |
+| Pages render with `displayMessage(localizer)` every time they build, from the `SinewException` in state | A language switch updates errors already on screen |
 | The code ends every displayed message | A support ticket or screenshot points straight at the failing call |
 | Validation field messages are shown beside their fields **without** a code | The code on every field is noise. The form-level message carries it. |
 | `CancelException` is never displayed | Cancelling isn't a failure |
@@ -128,7 +128,7 @@ error.displayMessage(localizer: Localizer?): String =
 ```
 ExceptionHandler(
     matches: (Throwable) -> Boolean,                         // "is this a timeout?"
-    transform: (Throwable) -> AppException,                  // "make a RequestTimeOutException for this call"
+    transform: (Throwable) -> SinewException,                  // "make a RequestTimeOutException for this call"
 )
 ```
 
@@ -144,7 +144,7 @@ processCall(module, function, layer, handlers, block): Result<T> =
         Result.success(block())
     catch CancellationException (Kotlin only)
         rethrow                                            // never a failure
-    catch AppException e
+    catch SinewException e
         Result.failure(e)                                  // already translated below: pass through unchanged
     catch Throwable e
         mapped = try { handlers.first { it.matches(e) }?.transform(e) } catch any { null }   // a broken handler counts as unmatched
@@ -168,9 +168,9 @@ processUseCase(module, function, body: () -> T): Result<T> = processCall(module,
 processResult(module, function, layer = UseCase, body: suspend () -> T): Result<T>
 ```
 
-There are no handlers. A repository failure arrives as an `AppException` and passes through. A domain exception thrown by a rule passes through too. A bug in the use case's own code becomes `UnexpectedException` with layer `UC` and is reported.
+There are no handlers. A repository failure arrives as an `SinewException` and passes through. A domain exception thrown by a rule passes through too. A bug in the use case's own code becomes `UnexpectedException` with layer `UC` and is reported.
 
-Inside a use case, results are read in a straight line. `requireData()` (Flutter) and `getOrThrow()` (Kotlin) return the data or throw the failure's `AppException`, which the guard passes through unchanged:
+Inside a use case, results are read in a straight line. `requireData()` (Flutter) and `getOrThrow()` (Kotlin) return the data or throw the failure's `SinewException`, which the guard passes through unchanged:
 
 ```
 placeOrder(cart) = processUseCase("ORD", "PO") {
@@ -183,7 +183,7 @@ placeOrder(cart) = processUseCase("ORD", "PO") {
 #### Reporting
 
 ```
-interface CrashReporter { recordNonFatal(error: AppException, stackTrace) }
+interface CrashReporter { recordNonFatal(error: SinewException, stackTrace) }
 
 CrashReporter.none                 // the default: records nothing
 CrashReporter.install(reporter)    // once, at the app's composition root
@@ -197,9 +197,9 @@ This is the one documented global in Sinew. Tests install a recording reporter a
 | Name | Signature (pseudocode) | Package | For |
 |---|---|---|---|
 | `ErrorMessage` | `Server(text) \| Local(key, args = {}, fallback)` | models | who provides the text |
-| `AppException.message` | `message: ErrorMessage` | models | every exception's user-facing message |
+| `SinewException.message` | `message: ErrorMessage` | models | every exception's user-facing message |
 | built-in types | `XException(module, layer, function, cause = null, …extra fields)`; each has `typeCode`, `message`, `retryable` | exception | the classification in the table |
-| `ExceptionHandler` | `ExceptionHandler(matches: (Throwable) -> Boolean, transform: (Throwable) -> AppException)` | exception | one rule in a handler list |
+| `ExceptionHandler` | `ExceptionHandler(matches: (Throwable) -> Boolean, transform: (Throwable) -> SinewException)` | exception | one rule in a handler list |
 | `envelopeDataMissing` | `envelopeDataMissing(module, function): ExceptionHandler` | exception | the shared last handler |
 | `processCall` | `processCall(module, function, layer, handlers, block): Result<T>` | exception | the shared guard core, public |
 | `processUseCase` (Flutter) | `processUseCase(module, function, body): Future<Result<T>>` | exception | the use-case guard |
@@ -207,18 +207,18 @@ This is the one documented global in Sinew. Tests install a recording reporter a
 | `requireData` (Flutter) | `Result<T>.requireData(): T` | models | straight-line reading inside a use case |
 | `CrashReporter` | `interface`, `none`, `install(reporter)`, `current` | exception | where bugs are reported |
 | `Localizer` | `interface { resolve(key, args): String? }` | exception | how the app resolves local keys |
-| `displayMessage` | `AppException.displayMessage(localizer: Localizer?): String` | exception | the text a page shows, ending with the code |
+| `displayMessage` | `SinewException.displayMessage(localizer: Localizer?): String` | exception | the text a page shows, ending with the code |
 | `SinewLocalizations` (Flutter) | `SinewLocalizations.delegate`, `SinewLocalizations.of(context)` | l10n | English and Indonesian for the `sinew.` keys |
 | `sinew-l10n` resources (Kotlin) | `values/strings.xml`, `values-in/strings.xml`, `SinewStrings.resolve(key, args)` | l10n | the same, as Compose resources |
 
 ### 4. Build steps
 
-1. `ErrorMessage` and the `message` field on `AppException` (in `sinew_models`).
+1. `ErrorMessage` and the `message` field on `SinewException` (in `sinew_models`).
 2. The 20 built-in types with codes, retryable flags, extra fields, local keys and English fallbacks. A test checks that every code and every key is unique and that every key starts with `sinew.`.
 3. `ExceptionHandler` and the `envelopeDataMissing` handler.
 4. `processCall`, test first. Tests:
    - success returns the value;
-   - a lower-layer `AppException` passes through with its original code and message;
+   - a lower-layer `SinewException` passes through with its original code and message;
    - a matched error is transformed;
    - an unmatched error becomes `UnexpectedException` and is reported once;
    - a `ParseException` is reported once;
@@ -250,7 +250,7 @@ This is the one documented global in Sinew. Tests install a recording reporter a
 
 | Case | Decided behavior |
 |---|---|
-| A 2xx envelope whose `failure()` is set | Network's `processApiCall` throws `ApiErrorException` with `Server(failure.message)`, or `ValidationException` when `fieldErrors` is present. It's an `AppException`, so `processCall` passes it through. |
+| A 2xx envelope whose `failure()` is set | Network's `processApiCall` throws `ApiErrorException` with `Server(failure.message)`, or `ValidationException` when `fieldErrors` is present. It's an `SinewException`, so `processCall` passes it through. |
 | A backend error with an empty `message` | Treated as "not readable": the type's local key is used. An `ApiErrorException` with an empty message falls back to `sinew.error.generic`. |
 | The backend ignores `Accept-Language` | Its text is shown as it arrives. Sinew doesn't translate server text. |
 | The app's language changes while a request is in flight | The request carries the old `Accept-Language`. Its server message arrives in the old language; the next request uses the new one. Local messages render in the new language immediately. |
@@ -287,14 +287,14 @@ public sealed interface ErrorMessage {
 }
 
 public class NoInternetConnectionException(module: String, layer: ExceptionLayer, function: String, cause: Throwable? = null) :
-    AppException(module, layer, function, cause) {
+    SinewException(module, layer, function, cause) {
     override val typeCode: String = "NIC"
     override val retryable: Boolean = true
     override val errorMessage: ErrorMessage = ErrorMessage.Local("sinew.error.noInternet", fallback = "You're offline. Check your connection and try again.")
 }
 
 public class RateLimitedException(module: String, layer: ExceptionLayer, function: String, public val retryAfter: Duration?,
-                                  override val errorMessage: ErrorMessage, cause: Throwable? = null) : AppException(module, layer, function, cause) {
+                                  override val errorMessage: ErrorMessage, cause: Throwable? = null) : SinewException(module, layer, function, cause) {
     override val typeCode: String = "RTL"
     override val retryable: Boolean = true
 }
@@ -307,7 +307,7 @@ Every built-in type follows one of these two shapes: a fixed local message, or a
 ```kotlin
 public class ExceptionHandler(
     public val matches: (Throwable) -> Boolean,
-    public val transform: (Throwable) -> AppException,
+    public val transform: (Throwable) -> SinewException,
 )
 
 public fun envelopeDataMissing(module: String, function: String, layer: ExceptionLayer): ExceptionHandler =
@@ -317,7 +317,7 @@ public suspend fun <T> processResult(module: String, function: String, layer: Ex
                                      block: suspend () -> T): Result<T> = processCall(module, function, layer, emptyList(), block)
 ```
 
-Inside a use case, results are read with `getOrThrow()`, which throws the failure's `AppException` for the guard to pass through:
+Inside a use case, results are read with `getOrThrow()`, which throws the failure's `SinewException` for the guard to pass through:
 
 ```kotlin
 override suspend fun invoke(cart: Cart): Result<Order> = processResult("ORD", "PO") {
@@ -332,7 +332,7 @@ override suspend fun invoke(cart: Cart): Result<Order> = processResult("ORD", "P
 ```kotlin
 public fun interface Localizer { public fun resolve(key: String, args: Map<String, Any>): String? }
 
-public fun AppException.displayMessage(localizer: Localizer?): String = when (val m = errorMessage) {
+public fun SinewException.displayMessage(localizer: Localizer?): String = when (val m = errorMessage) {
     is ErrorMessage.Server -> m.text
     is ErrorMessage.Local -> localizer?.resolve(m.key, m.args) ?: m.fallback
 } + " ($code)"
@@ -393,12 +393,12 @@ The same texts are used by the Flutter ARB files, so both platforms read identic
 
 | Name | Kotlin signature |
 |---|---|
-| built-in types | `public class XException(module, layer, function, …, cause: Throwable? = null) : AppException` |
-| `ExceptionHandler` | `public class ExceptionHandler(matches: (Throwable) -> Boolean, transform: (Throwable) -> AppException)` |
+| built-in types | `public class XException(module, layer, function, …, cause: Throwable? = null) : SinewException` |
+| `ExceptionHandler` | `public class ExceptionHandler(matches: (Throwable) -> Boolean, transform: (Throwable) -> SinewException)` |
 | `processCall`, `processResult` | `public suspend fun <T>`, see Error Model |
 | `CrashReporter` | `public fun interface CrashReporter`, `CrashReporter.None`, `CrashReporter.install(r)`, `CrashReporter.current` |
 | `Localizer` | `public fun interface Localizer` |
-| `displayMessage` | `public fun AppException.displayMessage(localizer: Localizer?): String` |
+| `displayMessage` | `public fun SinewException.displayMessage(localizer: Localizer?): String` |
 | `rememberSinewLocalizer` | `@Composable public fun rememberSinewLocalizer(appStrings: Localizer? = null): Localizer` (`sinew-l10n`) |
 | `SinewStrings` | `public object SinewStrings { public suspend fun resolve(key: String, args: Map<String, Any>): String? }` (`sinew-l10n`, non-Compose callers) |
 
@@ -449,8 +449,8 @@ final class LocalMessage extends ErrorMessage {
   final String key; final Map<String, Object> args; final String fallback;
 }
 
-abstract class AppException implements Exception {
-  const AppException(this.module, this.layer, this.function, {this.cause});
+abstract class SinewException implements Exception {
+  const SinewException(this.module, this.layer, this.function, {this.cause});
   final String module; final ExceptionLayer layer; final String function; final Object? cause;
   String get typeCode;
   ErrorMessage get message;
@@ -458,7 +458,7 @@ abstract class AppException implements Exception {
   String get code => '$module-${layer.code}-$function-$typeCode';
 }
 
-class NoInternetConnectionException extends AppException {
+class NoInternetConnectionException extends SinewException {
   const NoInternetConnectionException(super.module, super.layer, super.function, {super.cause});
   @override String get typeCode => 'NIC';
   @override bool get retryable => true;
@@ -476,7 +476,7 @@ Future<Result<T>> processUseCase<T>(String module, String function, Future<T> Fu
 
 abstract interface class Localizer { String? resolve(String key, Map<String, Object> args); }
 
-extension DisplayMessage on AppException {
+extension DisplayMessage on SinewException {
   String displayMessage(Localizer? localizer) {
     final text = switch (message) {
       ServerMessage(:final text) => text,
@@ -524,8 +524,8 @@ The Indonesian texts are the table in the Kotlin Exception note, so both platfor
 | Name | Dart |
 |---|---|
 | `ErrorMessage` | `sealed class` with `ServerMessage`, `LocalMessage` |
-| built-in types | `class XException extends AppException` |
-| `ExceptionHandler` | `class ExceptionHandler { const ExceptionHandler(this.matches, this.transform); final bool Function(Object error) matches; final AppException Function(Object error) transform; }` |
+| built-in types | `class XException extends SinewException` |
+| `ExceptionHandler` | `class ExceptionHandler { const ExceptionHandler(this.matches, this.transform); final bool Function(Object error) matches; final SinewException Function(Object error) transform; }` |
 | `processCall`, `processUseCase` | see Error Model |
 | `Localizer`, `displayMessage` | as above |
 | `SinewLocalizations`, `SinewLocalizer.of` | `sinew_l10n` |
@@ -544,7 +544,7 @@ The Indonesian texts are the table in the Kotlin Exception note, so both platfor
 
 | Case | Decided behavior |
 |---|---|
-| `AppException.message` is an `ErrorMessage`, not a `String` | Dart's `Exception` has no `message` member, so there's no clash. The name matches the base contract. |
+| `SinewException.message` is an `ErrorMessage`, not a `String` | Dart's `Exception` has no `message` member, so there's no clash. The name matches the base contract. |
 | An app's own ARB defines a `sinewError…` key | Its `Localizer` resolves it first, which overrides Sinew's wording. |
 
 :::info[Decided by default (revisit during implementation)]

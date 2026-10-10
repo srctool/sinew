@@ -20,7 +20,7 @@ Every layer needs a few shared shapes: what a domain model is, what an API paylo
 
 Backends disagree on those shapes, and one app can talk to several. A single backend can even have three different paged shapes. So Sinew ships no concrete envelope with fixed JSON keys. It ships **abstract envelope bases** that do the mapping, and each app declares its own envelopes: the fields, the JSON keys and how its page metadata reads.
 
-The same goes for a success flag and a message. Sinew assumes no `success`, `message` or `errors` key. An envelope has two optional hooks, `failure()` and `message()`, and the app's subclass fills them from its own keys, the way `meta()` reads its own page keys. A backend without those keys declares nothing, and Sinew reads nothing. A non-2xx status fails the call before any envelope is parsed, with the error body read by the app's `ErrorBodyReader` (see [Network](/guide/packages/network)).
+The same goes for a success flag and a message. Sinew assumes no `success`, `message` or `errors` key. An envelope has two optional hooks, `failure()` and `message()`, and the app's subclass fills them from its own keys, the way its `PagingMetaEnvelope` reads its own page keys. A backend without those keys declares nothing, and Sinew reads nothing. A non-2xx status fails the call before any envelope is parsed, with the error body read by the app's `ErrorBodyReader` (see [Network](/guide/packages/network)).
 
 ### 2. Shape
 
@@ -76,12 +76,12 @@ Sinew provides four abstract bases on top of it. Each implements `toDomain()` on
 |---|---|---|
 | `ObjectEnvelope<T : Remote<D>, D : Domain>` | `data: T?` | `D` (throws `EnvelopeDataMissing` when `data` is null) |
 | `ListEnvelope<T : Remote<D>, D : Domain>` | `items: List<T>?` | `List<D>` (null → empty) |
-| `PagedEnvelope<T : Remote<D>, D : Domain>` | `items: List<T>?` and `meta(): PagingMetaDomain` | `PagingDomain<D>`: every item mapped, plus the app's meta |
+| `PagedEnvelope<T : Remote<D>, D : Domain>` | `items: List<T>?` and `meta: PagingMetaEnvelope?` (overridden with its own meta type) | `PagingDomain<D>`: every item mapped, plus `meta.toDomain()` (an absent meta → `PagingMetaDomain()`) |
 | `VoidEnvelope` | nothing | nothing (`Unit` / `void`) |
 
 **Two type parameters, on purpose.** `ObjectEnvelope<T : Remote<D>, D : Domain>` names both the remote model and the domain type. The bound tells the compiler that `T.toDomain()` returns `D`. That's what lets `PagedEnvelope` map every item without a mapper argument.
 
-**`meta()` is where the app reads its own page keys.** One backend says `total_page`, another `max_page`, a third nests it under `metadata.pagination`. Each app envelope turns its keys into the one `PagingMetaDomain` shape.
+**`PagingMetaEnvelope` is where the app reads its own page keys.** It's an abstract base with one `toDomain(): PagingMetaDomain`, the meta's counterpart of `Remote`. One backend says `total_page`, another `max_page`, a third nests it under `metadata.pagination`, and one backend's endpoints can disagree. Each app declares a meta subclass per shape, and `PagedEnvelope` maps it like it maps every item. The subclass overrides `meta` with its concrete type, so `PagedEnvelope` needs no third type parameter. Each app meta turns its keys into the one `PagingMetaDomain` shape.
 
 **Naming.** `Envelope` names Sinew's abstract mapping. An app's concrete classes describe one backend's wire shape and are conventionally suffixed `Response`: `ObjectResponse : ObjectEnvelope`, `ListResponse : ListEnvelope`, `PagedResponse : PagedEnvelope`. A project with several backends or shapes prefixes them (`RecordsPagedResponse`).
 
@@ -90,21 +90,21 @@ Sinew provides four abstract bases on top of it. Each implements `toDomain()` on
 ```
 // JSON: { "success": true, "message": "", "data": [ … ], "meta": { "page": 1, "limit": 20, "total": 95, "totalPage": 5, "hasNextPage": true } }
 
-class PageMeta(page?, limit?, total?, totalPage?, hasNextPage?)          // the app's meta remote model, every key optional
+class PageMeta(page?, limit?, total?, totalPage?, hasNextPage?) : PagingMetaEnvelope() {     // every key optional
+    toDomain() = PagingMetaDomain(
+        page = page ?: 1, limit = limit ?: 0, total = total ?: 0, totalPage = totalPage ?: 0, hasNextPage = hasNextPage ?: false,
+    )
+}
 
 class PagedResponse<T : Remote<D>, D : Domain>(
     @key("success") ok: Boolean? = null,
     @key("message") text: String? = null,
     @key("errors") errors: Map<String, List<String>>? = null,
     @key("data") items: List<T>? = null,
-    @key("meta") pageMeta: PageMeta? = null,
+    @key("meta") meta: PageMeta? = null,                  // overrides PagedEnvelope.meta with this backend's type
 ) : PagedEnvelope<T, D>() {
     failure() = if (ok == false) EnvelopeFailure(text, errors) else null
     message() = text
-    meta() = PagingMetaDomain(
-        page = pageMeta?.page ?: 1, limit = pageMeta?.limit ?: 0, total = pageMeta?.total ?: 0,
-        totalPage = pageMeta?.totalPage ?: 0, hasNextPage = pageMeta?.hasNextPage ?: false,
-    )
 }
 
 class ObjectResponse<T : Remote<D>, D : Domain>(
@@ -123,15 +123,18 @@ A missing `success` key counts as success (`ok == false` only when the backend s
 ```
 // JSON: { "data": { "records": [ … ], "max_page": 5, "total": 95, "page_size": 20, "current_page": 1 } }
 
+// The page keys sit beside the records, so the body is the meta too.
 class RecordsBody<T>(@key("records") records: List<T>?, @key("max_page") maxPage?, @key("total") total?,
-                     @key("page_size") pageSize?, @key("current_page") page?)
+                     @key("page_size") pageSize?, @key("current_page") page?) : PagingMetaEnvelope() {
+    toDomain() = PagingMetaDomain(
+        page = page ?: 1, limit = pageSize ?: 0, total = total ?: 0, totalPage = maxPage ?: 0,
+        hasNextPage = (page ?: 1) < (maxPage ?: 0),
+    )
+}
 
 class RecordsPagedResponse<T : Remote<D>, D : Domain>(@key("data") body: RecordsBody<T>? = null) : PagedEnvelope<T, D>() {
     items = body?.records
-    meta() = PagingMetaDomain(
-        page = body?.page ?: 1, limit = body?.pageSize ?: 0, total = body?.total ?: 0, totalPage = body?.maxPage ?: 0,
-        hasNextPage = (body?.page ?: 1) < (body?.maxPage ?: 0),
-    )
+    meta = body
 }
 ```
 
@@ -164,7 +167,7 @@ One shape for every backend, whatever its meta fields are called. Paging can be 
 | | Kotlin | Flutter |
 |---|---|---|
 | Type | Sinew's own `Result<T>`: `Success(data, message)` / `Failure(error)` | Sinew's own `Result<T>`: `Success(data, message)` / `Failure(error, stackTrace)` |
-| The failure's error | typed `AppException`, no cast | the same |
+| The failure's error | typed `SinewException`, no cast | the same |
 | Error text | rendered from the exception's `message` at display time (see Exception) | the same |
 | Success text | `Success.message`: the envelope's `message()`, or `""` | the same |
 | Consuming | `fold`, `onSuccess`, `onFailure`, `map`, `getOrThrow` | `when`, `fold`, `transform`, `requireData` |
@@ -177,12 +180,12 @@ Both platforms use Sinew's own `Result`, because `kotlin.Result` has no place fo
 ViewState<T> =
     Loading(data: T? = null)
   | Done(data: T)
-  | Failed(data: T? = null, error: AppException, stackTrace = null)
+  | Failed(data: T? = null, error: SinewException, stackTrace = null)
 ```
 
 `Loading` and `Failed` can still carry the **previous data**, so a reload or a failed reload doesn't blank the screen. Read the renderable data with `dataOrNull`.
 
-`Failed` keeps the `AppException`, never pre-rendered text: the page renders the message every time it builds, so a language switch updates an error already on screen. A success message is never state: it's an effect the view model sends (see [Presentation](/guide/packages/presentation)).
+`Failed` keeps the `SinewException`, never pre-rendered text: the page renders the message every time it builds, so a language switch updates an error already on screen. A success message is never state: it's an effect the view model sends (see [Presentation](/guide/packages/presentation)).
 
 | Situation | State |
 |---|---|
@@ -218,8 +221,8 @@ Without `Idle`, `ViewState` maps one-to-one onto Riverpod's `AsyncValue` (`Async
 
 #### What lives here from the error model
 
-`ViewState` and `Result` carry an `AppException`, and `sinew_exception` depends on this package. So the **base contract** of the error model lives here, in the leaf:
-- `AppException`, `ExceptionLayer` and `ErrorMessage` (who provides the user-facing text, see [Exception](/guide/packages/exception));
+`ViewState` and `Result` carry an `SinewException`, and `sinew_exception` depends on this package. So the **base contract** of the error model lives here, in the leaf:
+- `SinewException`, `ExceptionLayer` and `ErrorMessage` (who provides the user-facing text, see [Exception](/guide/packages/exception));
 - `EnvelopeDataMissing`, a plain error an envelope throws when its payload is absent.
 
 The concrete exception types, the handlers and the guards live in [Exception](/guide/packages/exception). Its handlers map `EnvelopeDataMissing` to `ParseException` with the guard's module and function. The envelope itself doesn't know them.
@@ -239,30 +242,31 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 | `EnvelopeFailure` | `(message: String? = null, fieldErrors: Map<String, List<String>>? = null)` | a failure reported inside a 2xx body |
 | `ObjectEnvelope<T, D>` | `abstract { abstract data: T?; toDomain(): D }` | base for one-object envelopes |
 | `ListEnvelope<T, D>` | `abstract { abstract items: List<T>?; toDomain(): List<D> }` | base for list envelopes |
-| `PagedEnvelope<T, D>` | `abstract { abstract items: List<T>?; abstract meta(): PagingMetaDomain; toDomain(): PagingDomain<D> }` | base for paged envelopes |
+| `PagedEnvelope<T, D>` | `abstract { abstract items: List<T>?; abstract meta: PagingMetaEnvelope?; toDomain(): PagingDomain<D> }` | base for paged envelopes |
+| `PagingMetaEnvelope` | `abstract { toDomain(): PagingMetaDomain }` | base for a backend's page information |
 | `VoidEnvelope` | `abstract : Envelope<Unit>` | base for payload-less envelopes |
 | `PagingDomain<T>` | `(items = [], meta = PagingMetaDomain())`, `copy(items, meta)` | a page of items |
 | `PagingMetaDomain` | fields above, `copy(…)` | page information |
 | `PagingEntity<T>` | `(items, meta: PagingMetaEntity)`, `toDomain(convert: (T) -> R): PagingDomain<R>` | a stored page |
 | `ViewState<T>` | `Loading \| Done \| Failed`, `dataOrNull`, `isLoading` | page rendering |
-| `AppException`, `ExceptionLayer`, `ErrorMessage` | the base contract from the [Error Model](/guide/foundations/error-model) | so `ViewState` and `Result` can carry it |
-| `EnvelopeDataMissing` | a plain error (not an `AppException`) | thrown by an envelope with no payload. The guard maps it to `ParseException`. |
-| `Result<T>` | `Success(data, message = "") \| Failure(error: AppException)` (Flutter adds `stackTrace?`), with the consuming helpers above | operation outcome, on both platforms |
+| `SinewException`, `ExceptionLayer`, `ErrorMessage` | the base contract from the [Error Model](/guide/foundations/error-model) | so `ViewState` and `Result` can carry it |
+| `EnvelopeDataMissing` | a plain error (not an `SinewException`) | thrown by an envelope with no payload. The guard maps it to `ParseException`. |
+| `Result<T>` | `Success(data, message = "") \| Failure(error: SinewException)` (Flutter adds `stackTrace?`), with the consuming helpers above | operation outcome, on both platforms |
 
 `ObjectEnvelope.toDomain()` with `data == null` throws `EnvelopeDataMissing`. The guard's handler turns that into `ParseException` with its module and function, returns it as a failed `Result`, and reports it.
 
 ### 4. Build steps
 
-1. `Domain` with value equality, `Remote`, `Entity`, and the error base contract (`AppException`, `ExceptionLayer`, `EnvelopeDataMissing`).
+1. `Domain` with value equality, `Remote`, `Entity`, and the error base contract (`SinewException`, `ExceptionLayer`, `EnvelopeDataMissing`).
 2. `Envelope` and the four abstract bases, with tests on a test-only subclass of each:
    - a full payload;
    - missing optional keys;
    - `success: false` with and without `errors` (`failure()` returns them);
    - `message` present and absent (`message()`);
    - a subclass that keeps both hooks at their defaults.
-3. `PagingDomain`, `PagingMetaDomain`, `PagingEntity`, with a test that a `PagedEnvelope` subclass maps every item through its own `toDomain()` and returns the subclass's `meta()`.
+3. `PagingDomain`, `PagingMetaDomain`, `PagingEntity`, with a test that a `PagedEnvelope` subclass maps every item through its own `toDomain()`, maps its meta through the meta's own `toDomain()`, and returns `PagingMetaDomain()` when the meta is absent.
 4. `ViewState` and its helpers, with tests for `dataOrNull` on each variant.
-5. `Result` and its helpers, on both platforms. `getOrThrow()` / `requireData()` throw the failure's `AppException`, so a use case can read results in a straight line; `map` / `transform` keep `message`.
+5. `Result` and its helpers, on both platforms. `getOrThrow()` / `requireData()` throw the failure's `SinewException`, so a use case can read results in a straight line; `map` / `transform` keep `message`.
 6. Write both examples from §2 as test fixtures. They double as the documentation's worked examples.
 
 **Done when**
@@ -280,7 +284,7 @@ The concrete exception types, the handlers and the guards live in [Exception](/g
 | A success message the page should show | The view model reads `Success.message` and sends it as an effect. It's never stored in `ViewState`. |
 | An object envelope with `data: null` | `toDomain()` throws `EnvelopeDataMissing`. The guard maps it to `ParseException`, then reports and returns it. An endpoint where "no data" is a normal answer uses the optional-read guard instead (404 → `null`, see Network). |
 | A list or paged response with `data: null` | Treated as an empty list. A missing list is not an error. |
-| A paged response without its meta keys | The app's `meta()` falls back to its defaults. With `hasNextPage = false` the list shows one page and stops, so an envelope whose backend omits meta on the last page should compute `hasNextPage` from what it has (for example `page < totalPage`). |
+| A paged response without its meta | No meta object: `PagingMetaDomain()`. A meta with missing keys: the app meta's `toDomain()` falls back to its own defaults. With `hasNextPage = false` the list shows one page and stops, so an envelope whose backend omits meta on the last page should compute `hasNextPage` from what it has (for example `page < totalPage`). |
 | An unknown enum value | The DTO's enum falls back to `unknown`. The domain decides what `unknown` means. |
 | A new backend wrapper shape | The app writes one envelope per shape on the abstract bases, or implements `Envelope<R>` directly for anything unusual. Nothing else changes. |
 | An empty list on a first load | `Done(data: [])`, not `Failed`. The UI decides how to show "empty". |
@@ -327,9 +331,12 @@ public abstract class ListEnvelope<out T : Remote<D>, D : Domain> : Envelope<Lis
 
 public abstract class PagedEnvelope<out T : Remote<D>, D : Domain> : Envelope<PagingDomain<D>> {
     public abstract val items: List<T>?
-    public abstract fun meta(): PagingMetaDomain
-    override fun toDomain(): PagingDomain<D> = PagingDomain(items.orEmpty().map { it.toDomain() }, meta())
+    public abstract val meta: PagingMetaEnvelope?
+    override fun toDomain(): PagingDomain<D> =
+        PagingDomain(items.orEmpty().map { it.toDomain() }, meta?.toDomain() ?: PagingMetaDomain())
 }
+
+public abstract class PagingMetaEnvelope { public abstract fun toDomain(): PagingMetaDomain }
 
 public abstract class VoidEnvelope : Envelope<Unit> { override fun toDomain() {} }
 
@@ -347,13 +354,17 @@ internal data class PagedResponse<T : Remote<D>, D : Domain>(
     @SerialName("message") val text: String? = null,
     @SerialName("errors") val errors: Map<String, List<String>>? = null,
     @SerialName("data") override val items: List<T>? = null,
-    @SerialName("meta") val pageMeta: PageMeta? = null,
+    @SerialName("meta") override val meta: PageMeta? = null,         // PageMeta : PagingMetaEnvelope
 ) : PagedEnvelope<T, D>() {
     override fun failure(): EnvelopeFailure? = if (ok == false) EnvelopeFailure(text, errors) else null
     override fun message(): String? = text
-    override fun meta(): PagingMetaDomain = PagingMetaDomain(
-        page = pageMeta?.page ?: 1, limit = pageMeta?.limit ?: 0, total = pageMeta?.total ?: 0,
-        totalPage = pageMeta?.totalPage ?: 0, hasNextPage = pageMeta?.hasNextPage ?: false,
+}
+
+@Serializable
+internal data class PageMeta(val page: Int? = null, val limit: Int? = null, val total: Int? = null,
+                             val totalPage: Int? = null, val hasNextPage: Boolean? = null) : PagingMetaEnvelope() {
+    override fun toDomain(): PagingMetaDomain = PagingMetaDomain(
+        page = page ?: 1, limit = limit ?: 0, total = total ?: 0, totalPage = totalPage ?: 0, hasNextPage = hasNextPage ?: false,
     )
 }
 
@@ -387,7 +398,7 @@ public data class PagingEntity<out T>(val items: List<T> = emptyList(), val meta
 public sealed interface ViewState<out T> {
     public data class Loading<out T>(val data: T? = null) : ViewState<T>
     public data class Done<out T>(val data: T) : ViewState<T>
-    public data class Failed<out T>(val data: T? = null, val error: AppException) : ViewState<T>
+    public data class Failed<out T>(val data: T? = null, val error: SinewException) : ViewState<T>
 }
 public val <T> ViewState<T>.dataOrNull: T?
 public val ViewState<*>.isLoading: Boolean
@@ -404,10 +415,10 @@ The table in the base note, with these Kotlin specifics:
 | `Domain` | `public interface Domain` (marker; domain models are `data class`es) |
 | `Envelope` | `public interface Envelope<out R>` with `toDomain()` and default `failure()` / `message()` returning `null` |
 | `EnvelopeFailure` | `public data class EnvelopeFailure(message: String?, fieldErrors: Map<String, List<String>>?)` |
-| envelope bases | `public abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope` |
+| envelope bases | `public abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope`, and `PagingMetaEnvelope` for page information |
 | `DomainNotParsed<D>` | a `KSerializer<D>` that throws, for the domain type argument of generic envelopes |
 | `ViewState<T>` | `public sealed interface` with `Loading`, `Done`, `Failed` |
-| `AppException`, `ExceptionLayer`, `ErrorMessage`, `PlatformContext` | defined here (the leaf), documented in Exception and Architecture |
+| `SinewException`, `ExceptionLayer`, `ErrorMessage`, `PlatformContext` | defined here (the leaf), documented in Exception and Architecture |
 
 ### 4. Build steps {#kotlin-4-build-steps}
 
@@ -483,7 +494,18 @@ abstract class ObjectEnvelope<T extends Remote<D>, D extends Domain> implements 
   @override String? message() => null;
   @override D toDomain() => data?.toDomain() ?? (throw const EnvelopeDataMissing());
 }
-// ListEnvelope (items), PagedEnvelope (items + meta()), VoidEnvelope follow the same pattern.
+// ListEnvelope (items) and VoidEnvelope follow the same pattern.
+
+abstract class PagedEnvelope<T extends Remote<D>, D extends Domain> implements Envelope<PagingDomain<D>> {
+  const PagedEnvelope();
+  List<T>? get items;
+  PagingMetaEnvelope? get meta;   // a subclass overrides it with its own meta type
+  @override PagingDomain<D> toDomain() =>
+      PagingDomain(items: [for (final item in items ?? <T>[]) item.toDomain()], meta: meta?.toDomain() ?? const PagingMetaDomain());
+  …
+}
+
+abstract class PagingMetaEnvelope { const PagingMetaEnvelope(); PagingMetaDomain toDomain(); }
 ```
 
 `Domain` implements value equality from `props` itself, with no `equatable` dependency (base review).
@@ -493,7 +515,7 @@ abstract class ObjectEnvelope<T extends Remote<D>, D extends Domain> implements 
 ```dart
 @JsonSerializable(genericArgumentFactories: true, createToJson: false)
 class PagedResponse<T extends Remote<D>, D extends Domain> extends PagedEnvelope<T, D> {
-  const PagedResponse({this.ok, this.text, this.errors, this.items, this.pageMeta});
+  const PagedResponse({this.ok, this.text, this.errors, this.items, this.meta});
 
   factory PagedResponse.fromJson(Map<String, dynamic> json, T Function(Object? json) fromJsonT, D Function(Object? json) fromJsonD) =>
       _$PagedResponseFromJson(json, fromJsonT, fromJsonD);
@@ -502,15 +524,10 @@ class PagedResponse<T extends Remote<D>, D extends Domain> extends PagedEnvelope
   @JsonKey(name: 'message') final String? text;
   @JsonKey(name: 'errors') final Map<String, List<String>>? errors;
   @override @JsonKey(name: 'data') final List<T>? items;
-  @JsonKey(name: 'meta') final PageMeta? pageMeta;
+  @override @JsonKey(name: 'meta') final PageMeta? meta;   // PageMeta extends PagingMetaEnvelope
 
   @override EnvelopeFailure? failure() => ok == false ? EnvelopeFailure(message: text, fieldErrors: errors) : null;
   @override String? message() => text;
-
-  @override
-  PagingMetaDomain meta() => PagingMetaDomain(
-        page: pageMeta?.page ?? 1, limit: pageMeta?.limit ?? 0, total: pageMeta?.total ?? 0,
-        totalPage: pageMeta?.totalPage ?? 0, hasNextPage: pageMeta?.hasNextPage ?? false);
 }
 ```
 
@@ -533,7 +550,7 @@ sealed class ViewState<T> {
 }
 final class Loading<T> extends ViewState<T> { const Loading([this.data]); final T? data; … }
 final class Done<T> extends ViewState<T> { const Done(this.data); final T data; … }
-final class Failed<T> extends ViewState<T> { const Failed(this.error, {this.data, this.stackTrace}); final AppException error; final T? data; final StackTrace? stackTrace; … }
+final class Failed<T> extends ViewState<T> { const Failed(this.error, {this.data, this.stackTrace}); final SinewException error; final T? data; final StackTrace? stackTrace; … }
 ```
 
 `Result` is documented in [Error Model](/guide/foundations/error-model#implementation).
@@ -545,7 +562,7 @@ As the base note, with these Dart specifics:
 | Name | Dart |
 |---|---|
 | `Domain` | `abstract class Domain` with `props`, `==`, `hashCode` |
-| envelope bases | `abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope`, mapping plus `failure()` / `message()` returning `null` |
+| envelope bases | `abstract class ObjectEnvelope / ListEnvelope / PagedEnvelope / VoidEnvelope` and `PagingMetaEnvelope`, mapping plus `failure()` / `message()` returning `null` |
 | `EnvelopeFailure` | `class EnvelopeFailure({String? message, Map<String, List<String>>? fieldErrors})` |
 | `EnvelopeDataMissing` | `class EnvelopeDataMissing implements Exception` |
 | `unreachableDomainFromJson` | `Never unreachableDomainFromJson(Map<String, dynamic> json)` |

@@ -120,7 +120,7 @@ interface TokenSource {
 }
 
 interface CrashReporter {
-    recordNonFatal(error: AppException, stackTrace)
+    recordNonFatal(error: SinewException, stackTrace)
     companion: none                 // the default: records nothing
 }
 ```
@@ -172,7 +172,7 @@ This note defines no classes of its own. The cross-package contracts it introduc
 |---|---|---|---|
 | `SinewConfig` | `SinewConfig(baseUrl, connectTimeout, readTimeout = 30s, writeTimeout = 60s, logHttp = false, anonymousPaths, locale)` | network | per-client configuration |
 | `TokenSource` | `accessToken(): String?`, `refresh(): RefreshOutcome`, `clear()` | network | where tokens live and how they refresh |
-| `CrashReporter` | `recordNonFatal(error: AppException, stackTrace)`, `CrashReporter.none` | exception | where unexpected and parse errors are reported |
+| `CrashReporter` | `recordNonFatal(error: SinewException, stackTrace)`, `CrashReporter.none` | exception | where unexpected and parse errors are reported |
 | `SinewHttp` | `SinewHttp.client(config, tokenSource, …)` (Kotlin) / `SinewHttp.dio(config, tokenSource, …)` (Flutter) | network | building one configured client |
 
 Each package's own API is in its note under `02 - Packages/`.
@@ -229,7 +229,7 @@ A Sinew type an app sees in a public signature is an `api` dependency, so it arr
 | `sinew-security` | | Tink, cryptography-kotlin, Biometric |
 | `sinew-camouflage` | `sinew-paging`, `camouflage-core` | |
 
-An app's data module that returns `PagingDomain` or fails with an `AppException` declares `sinew-paging` or `sinew-exception` as `api` too, so its own consumers get them.
+An app's data module that returns `PagingDomain` or fails with an `SinewException` declares `sinew-paging` or `sinew-exception` as `api` too, so its own consumers get them.
 
 #### Wiring with Koin {#kotlin-wiring-with-koin}
 
@@ -268,7 +268,7 @@ It's the single `expect` class in the public API. Every factory that needs the p
 | `PlatformContext` | `public expect class PlatformContext` |
 | `SinewConfig` | `public data class SinewConfig(val baseUrl: String, val connectTimeout: Duration = 15.seconds, val readTimeout: Duration = 30.seconds, val writeTimeout: Duration = 60.seconds, val logHttp: Boolean = false, val anonymousPaths: Set<String> = emptySet(), val locale: () -> String, val defaultHeaders: () -> Map<String, String> = { emptyMap() }, val errorBodyReader: ErrorBodyReader = ErrorBodyReader.Default)` |
 | `TokenSource` | `public interface TokenSource { public fun accessToken(): String?; public suspend fun refresh(): RefreshOutcome; public suspend fun clear() }` |
-| `CrashReporter` | `public fun interface CrashReporter { public fun recordNonFatal(error: AppException) }` + `companion object { None; install(r); val current }` |
+| `CrashReporter` | `public fun interface CrashReporter { public fun recordNonFatal(error: SinewException) }` + `companion object { None; install(r); val current }` |
 
 The stack trace is the exception's own on Kotlin, so `recordNonFatal` takes only the exception.
 
@@ -320,7 +320,7 @@ pub resolves transitive dependencies, but Dart's `depend_on_referenced_packages`
 |---|---|
 | writes DTOs and envelopes | `sinew_models`, `json_annotation` (+ `json_serializable` as a dev dependency) |
 | writes API clients | `sinew_network`, `dio`, `retrofit` (+ `retrofit_generator`) |
-| catches or creates `AppException`s (use cases, domain exceptions) | `sinew_exception` |
+| catches or creates `SinewException`s (use cases, domain exceptions) | `sinew_exception` |
 | has paged lists | `sinew_paging` |
 | uses Riverpod notifiers | `sinew_riverpod` (and `sinew_riverpod_providers` for ready providers) |
 
@@ -364,7 +364,7 @@ An app picks one style. Notifiers then read repositories from GetIt or from prov
 |---|---|
 | `SinewConfig` | `class SinewConfig { const SinewConfig({required String baseUrl, Duration connectTimeout = const Duration(seconds: 15), Duration readTimeout = const Duration(seconds: 30), Duration writeTimeout = const Duration(seconds: 60), bool logHttp = false, Set<String> anonymousPaths = const {}, required String Function() locale, Map<String, String> Function()? defaultHeaders, ErrorBodyReader errorBodyReader = ErrorBodyReader.standard}); }` |
 | `TokenSource` | `abstract interface class TokenSource { String? accessToken(); Future<RefreshOutcome> refresh(); Future<void> clear(); }` |
-| `CrashReporter` | `abstract interface class CrashReporter { void recordNonFatal(AppException error, StackTrace stackTrace); static const none = …; static void install(CrashReporter r); static CrashReporter get current; }` |
+| `CrashReporter` | `abstract interface class CrashReporter { void recordNonFatal(SinewException error, StackTrace stackTrace); static const none = …; static void install(CrashReporter r); static CrashReporter get current; }` |
 
 Unlike Kotlin, Dart keeps the stack trace separate from the exception, so `recordNonFatal` takes both.
 

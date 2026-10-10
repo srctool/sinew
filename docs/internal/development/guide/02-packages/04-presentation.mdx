@@ -69,7 +69,7 @@ OrderListState(
 |---|---|
 | One container with slices, not one subclass per screen state | Several things load independently: "the list is loaded **and** a cancel is running" needs both at once |
 | State changes only through `setState { copy(…) }` | Immutable updates. The page rebuilds from one value. |
-| No UI context, controllers, streams, timers or pre-rendered text in state | State is a plain value a test can compare. Errors stay `AppException`s, rendered at display time. |
+| No UI context, controllers, streams, timers or pre-rendered text in state | State is a plain value a test can compare. Errors stay `SinewException`s, rendered at display time. |
 | **Never trigger a side effect from a state change.** A snackbar, toast, dialog or navigation is an effect, emitted once. | A state is rendered again on every change elsewhere in the page. A side effect tied to a state (say, a snackbar on `Failed`) would fire again each time. |
 | A slice loaded when the page opens starts as `Loading()`. A page with several slices starts them all `Loading()` and loads them in parallel. | The first frame is already a skeleton, and each section appears as soon as its own data arrives. |
 
@@ -93,7 +93,7 @@ The flag lives in the view model, so it survives a rotation along with it. A new
 | Slice | `ViewState<Data>` or `PagingState<T>` | a `Boolean` (`cancelling`, `submitting`) |
 | While running | skeleton, or a refresh indicator | a spinner inside the button, the button disabled |
 | On success | `Done(data)` | back to `false`, plus a success **effect** (with `Success.message` when the backend sent one) |
-| On failure | `Failed(error)` rendered **in the page** | back to `false`, plus an error **effect** carrying the `AppException` |
+| On failure | `Failed(error)` rendered **in the page** | back to `false`, plus an error **effect** carrying the `SinewException` |
 
 Loads fail **into state**, because the page must keep showing the problem. Actions fail **as an effect**, because the page is still valid and the user only needs to be told once.
 
@@ -105,7 +105,7 @@ An effect is a one-time outcome: show a snackbar, open a dialog, call a navigati
 |---|---|
 | Effects go through an `EffectEmitter` and are collected by the page | One channel per page, released when the page goes away |
 | An effect emitted while no one is collecting is **buffered** and delivered once, to the next collector | A snackbar emitted during a rotation or a brief pause isn't lost, and isn't shown twice |
-| An error effect carries the `AppException`, never text | The page renders it with `displayMessage(localizer)` in the current language |
+| An error effect carries the `SinewException`, never text | The page renders it with `displayMessage(localizer)` in the current language |
 | View models never navigate. They emit an effect, and the page calls its navigation callback. | Navigation needs UI context |
 
 #### Simple pages

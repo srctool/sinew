@@ -33,7 +33,7 @@ flowchart TB
 ```
 
 - **Envelopes that map themselves.** Each envelope names its remote model and its domain type. The compiler then knows every item has a `toDomain()`, so the envelope maps the payload, including every item of a list or page. No repository writes a mapper function.
-- **Errors caught where they happen.** Each layer's guard turns failures into a typed `AppException` with a `module-layer-function-type` code (`ORD-R-GO-NIC`), and hands a `Result` upward. View models never `try`/`catch`.
+- **Errors caught where they happen.** Each layer's guard turns failures into a typed `SinewException` with a `module-layer-function-type` code (`ORD-R-GO-NIC`), and hands a `Result` upward. View models never `try`/`catch`.
 - **Presentation: page, event, action, effect, state.**
   - A page sends **events**.
   - The view model maps each event to an **action** (`mapEventToAction`) and handles it (`onAction`).
@@ -47,7 +47,7 @@ flowchart TB
 | Package | Holds |
 |---|---|
 | `sinew_models` | `Domain`, `Remote`, `Entity`, `Envelope` and four abstract envelope bases, `PagingDomain`, `ViewState`; on Flutter also `Result` |
-| `sinew_exception` | `AppException` and its codes, handler lists, the guards, `CrashReporter` |
+| `sinew_exception` | `SinewException` and its codes, handler lists, the guards, `CrashReporter` |
 | `sinew_paging` | `Pager<T>`, `PagingState<T>`, `LoadType`, four paging strategies |
 | `sinew_presentation` | the Event → Action → State + Effect base class, `EffectEmitter` (framework-neutral) |
 | `sinew_riverpod` / `sinew-viewmodel` | framework adapters (mixins and hooks / ViewModel bases) |
