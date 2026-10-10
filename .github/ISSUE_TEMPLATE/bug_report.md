@@ -46,4 +46,4 @@ If applicable, add screenshots or paste logs/stack traces to help explain your p
 Add any other context about the problem here.
 
 ---
-If you need a private channel to report a security issue or sensitive information, please email contact@srctool.com.
+Please don't report a security vulnerability in a public issue. Report it privately with **Report a vulnerability** on this repository's Security tab (https://github.com/srctool/sinew/security/advisories/new), or email contact@srctool.com for anything else sensitive.
