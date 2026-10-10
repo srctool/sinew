@@ -92,7 +92,7 @@ The flag lives in the view model, so it survives a rotation along with it. A new
 |---|---|---|
 | Slice | `ViewState<Data>` or `PagingState<T>` | a `Boolean` (`cancelling`, `submitting`) |
 | While running | skeleton, or a refresh indicator | a spinner inside the button, the button disabled |
-| On success | `Done(data)` | back to `false`, plus a success **effect** |
+| On success | `Done(data)` | back to `false`, plus a success **effect** (with `Success.message` when the backend sent one) |
 | On failure | `Failed(error)` rendered **in the page** | back to `false`, plus an error **effect** carrying the `AppException` |
 
 Loads fail **into state**, because the page must keep showing the problem. Actions fail **as an effect**, because the page is still valid and the user only needs to be told once.

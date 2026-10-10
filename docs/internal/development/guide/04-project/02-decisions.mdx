@@ -21,12 +21,12 @@ A short log of the decisions that shape Sinew. An ADR is never edited after it's
 
 ### ADR-3 No code generation, hand-written sealed types
 - **Context:** code generation in a library forces its tool and its version on every app.
-- **Decision:** `ViewState`, `Result`, `PagingState` and the envelope bases are hand-written. Kotlin uses `kotlin.Result`; Flutter has Sinew's own `Result`.
+- **Decision:** `ViewState`, `Result`, `PagingState` and the envelope bases are hand-written. Both platforms use Sinew's own `Result` (Kotlin moved off `kotlin.Result` on 2026-10-10, to carry a success message and a typed `AppException`).
 - **Consequences:** apps may still generate their own DTO parsing and API clients.
 
 ### ADR-4 Abstract envelope bases only
 - **Context:** backends wrap payloads differently, and one backend can have several paged shapes. Default envelopes with fixed JSON keys rarely fit.
-- **Decision:** Sinew ships `Envelope<R>` (with defaults for backends without a success flag) and the abstract `ObjectEnvelope`, `ListEnvelope`, `PagedEnvelope` and `VoidEnvelope`. Every app declares its own envelopes; `PagedEnvelope.meta()` maps each backend's page keys.
+- **Decision:** Sinew ships `Envelope<R>` (`toDomain()` plus optional `failure()` and `message()` hooks) and the abstract `ObjectEnvelope`, `ListEnvelope`, `PagedEnvelope` and `VoidEnvelope`, which hold mapping logic and no JSON keys. Every app declares its own envelopes, conventionally suffixed `Response` (`ObjectResponse : ObjectEnvelope`); `PagedEnvelope.meta()` maps each backend's page keys. Sinew assumes no `success`, `message` or `errors` key: an envelope has optional `failure()` and `message()` hooks the app fills from its own keys, and non-2xx failures come from the HTTP status and `ErrorBodyReader` (revised 2026-10-10). The remote model base is `Remote<D>` (was `Response<D>`), alongside `Entity<D>` and `Domain`.
 - **Consequences:** mapping every item stays automatic. Tests use JSON fixtures in the app's own shape.
 
 ### ADR-5 The HTTP library is exposed on purpose
@@ -36,7 +36,7 @@ A short log of the decisions that shape Sinew. An ADR is never edited after it's
 
 ### ADR-6 One error model, one classification, codes everywhere
 - **Context:** errors leaked as library exceptions, got swallowed, or couldn't be traced from a support report.
-- **Decision:** failures are translated once, where they happen, into typed `AppException`s with a `module-layer-function-type` code. Each layer hands a `Result` upward, and lower-layer exceptions pass through unchanged. The classification is the same on both platforms: descriptive names with short codes. `success: false` is `ApiErrorException`; `ServerException` is only for 5xx. `retryWithBackoff` returns the last real failure, so there's no "retry exceeded" type.
+- **Decision:** failures are translated once, where they happen, into typed `AppException`s with a `module-layer-function-type` code. Each layer hands a `Result` upward, and lower-layer exceptions pass through unchanged. The classification is the same on both platforms: descriptive names with short codes. An envelope `failure()` or an error body with a readable message is `ApiErrorException`; `ServerException` is only for 5xx. `retryWithBackoff` returns the last real failure, so there's no "retry exceeded" type.
 - **Consequences:** view models never `try`/`catch`. Every displayed message ends with its code.
 
 ### ADR-7 The error-model base lives in the leaf package

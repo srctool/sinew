@@ -144,8 +144,8 @@ assert states.last().orders.view == Done(PagingDomain([c], …))   // the stale 
     vm.state.test {
         vm.onEvent(Opened); runCurrent()
         vm.onEvent(QueryChanged("shoe")); advanceTimeBy(500); runCurrent()
-        fetch.complete(call = 1, Result.success(page(listOf(c))))
-        fetch.complete(call = 0, Result.success(page(listOf(a, b))))     // the old query's response, late
+        fetch.complete(call = 1, Result.Success(page(listOf(c))))
+        fetch.complete(call = 0, Result.Success(page(listOf(a, b))))     // the old query's response, late
         assertEquals(listOf(c), expectMostRecentItem().orders.view.dataOrNull?.items)
     }
     fetch.assertAllCompleted()
