@@ -18,7 +18,7 @@ Every app rebuilds the same HTTP setup. The hard parts are also the easiest to g
 - **Logging that never leaks a token.**
 - **Never sending a token to a host it doesn't belong to.**
 
-`sinew_network` builds a configured client (Dio on Flutter, Ktor on Kotlin) with those parts done once, plus the source guard `processApiCall`. The app keeps writing its API clients directly on Dio or Ktor. Sinew doesn't hide the HTTP library.
+`sinew_network` provides those parts as **separate pieces the app installs on its own client when it needs them** (Dio interceptors on Flutter, Ktor plugins on Kotlin), plus an optional preset that installs them all from one config, and the source guard `processApiCall`. The app keeps writing its API clients directly on Dio or Ktor. Sinew doesn't hide the HTTP library.
 
 ### 2. Shape
 
@@ -45,7 +45,8 @@ interface TokenSource {
 }
 
 RefreshOutcome = Refreshed | Rejected | Unavailable(cause: SinewException)
-//  Rejected:    the backend refused the refresh token, or the session ended while refreshing → the session is over
+//  Rejected:    the backend refused the refresh token, or the session ended while refreshing → the session is over;
+//               the source ends it itself, unless another session started meanwhile
 //  Unavailable: the refresh couldn't be completed (offline, timeout, 5xx) → the session is kept
 
 // Sinew's ready implementation: the app supplies only the backend call and where the refresh token is kept
@@ -87,7 +88,7 @@ flowchart TB
     Q -- no --> RF["tokenSource.refresh(), the only one"]
     RF --> O{"outcome"}
     O -- Refreshed --> RP["replay every queued request once, marked"]
-    O -- Rejected --> CL["tokenSource.clear(), fail every queued request with UnauthorizedException"]
+    O -- Rejected --> CL["the source ended the session; every queued request fails with UnauthorizedException"]
     O -- Unavailable --> KEEP["keep the session, fail every queued request with the cause (offline, timeout, 503)"]
     W --> O
 ```
@@ -101,7 +102,7 @@ flowchart TB
 | A replayed request is **marked**. A second 401 on it fails instead of refreshing again. | Otherwise a replay waits on a refresh that waits on the replay: a deadlock |
 | Anonymous paths never get a token and never trigger a refresh | A 401 there means "wrong credentials", not "expired token" |
 | The refresh call itself bypasses the auth layer | A failing refresh must not refresh itself |
-| `Rejected` ends the session: `clear()`, then every queued request fails with `UnauthorizedException` | The app's session service routes to sign-in |
+| `Rejected`: every queued request fails with `UnauthorizedException`. The **token source** ends the session, only if it's still the session the refresh started in; the auth layer never calls `clear()` | The app's session service routes to sign-in. A refresh voided by another user's sign-in must not sign them out |
 | `Unavailable` **keeps** the session: queued requests fail with the cause (`NoInternetConnectionException`, `RequestTimeOutException`, `ServiceUnavailableException`) | A refresh that fails because the network or the backend is down must not sign the user out. The page shows a retryable error; the next request tries again. |
 | A token is attached only to requests whose host is the client's `baseUrl` host | An absolute URL to a CDN or a storage bucket never receives the user's token |
 | `reset()` on sign-out clears the queue and the refreshing flag, and `clear()` voids a running refresh through the session epoch | Nothing leaks into the next user's session, and a late refresh result is never stored |
@@ -295,6 +296,15 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 - **The log reads nothing secret**: one line per exchange with the method, host, path, status and duration (or the failure's type). No header, body, query string or exception message, so a token can't reach it.
 - **Redirects**: at most 5 hops, never from `https` to `http`, and a hop to another host or port drops `Cookie` as well as `Authorization`.
 - **A request's own timeout and headers win** over the client's defaults, so a slow endpoint sets its deadline on that call.
+- **A rejected refresh is ended by the token source, not the auth layer.** If the auth layer called `clear()` on `Rejected`, a refresh voided because another user signed in meanwhile would sign that user out. `SessionTokenSource` ends the session under its lock only when the epoch is still the one the refresh started in.
+- **`Rejected` and a replayed 401 return the 401 response** to the validator, which throws `HttpStatusError(401)`; the guard maps it to `UnauthorizedException`. There's no separate rejection type.
+- **`SessionTokenSource` adds `start(access, refresh)`** for sign-in (it voids any refresh from the previous session) **and `onSessionEnded`**, called on `clear()` and when the backend rejects the refresh token or none is stored: the only way the app learns the backend ended the session.
+- **A refresh call that throws is `Unavailable`**, guarded as `AUTH-R-REFRESH-…` (an unexpected failure is reported), so a bug or a raw network error never signs the user out.
+- **A 401 for a request whose token was cleared since it was sent** (the user signed out mid-flight) returns as is, with no refresh: refreshing could bring the session back.
+- **A request with no token yet** (a cold start with only a refresh token) still refreshes on 401 and replays. **A request with its own `Authorization`** is left alone: no token, no refresh. **A one-shot streamed body** still triggers the refresh but isn't replayed, so the app's retry carries the new token.
+- **Anonymous paths match exactly**, relative to `baseUrl`'s path (`/auth/login` doesn't cover `/auth/login/history`), and another port is another host.
+- **Installable pieces first, the preset second.** Each layer (auth, headers, timeouts, the error-body reader, redirects, the log) is a public plugin or interceptor an app installs on its own client, alone or together, in any order the HTTP library allows. `SinewHttp.client(config, tokens)` stays as an optional preset that installs them all from one `SinewConfig`. An app that only wants the refresh logic installs only the auth layer.
+- **The backend's base URL is declared once per client** (`sinewBackend(url)` on Kotlin), and the pieces that need it (request URLs, the token's host, anonymous paths) read it from there.
 
 :::
 
@@ -310,34 +320,40 @@ This note builds the base network design on **Ktor 3**: one configured `HttpClie
 
 #### Building a client {#kotlin-building-a-client}
 
+Each layer is a public Ktor plugin, installed alone or together on the app's own `HttpClient`:
+
+```kotlin
+val http = HttpClient(OkHttp) {
+    expectSuccess = false                                           // needed by sinewErrorBody
+    sinewBackend("https://api.shop.com/v1")                         // defaultRequest + the base Sinew's plugins read: written once
+    install(ContentNegotiation) { json(SinewJson) }
+    install(SinewHeaders) { locale = { settings.language }; defaults = { mapOf("X-App-Version" to version) } }
+    install(HttpTimeout); install(SinewTimeouts) { read = 30.seconds; write = 60.seconds }
+    install(SinewAuth) { tokenSource = tokens; anonymousPaths = setOf("/auth/login") }
+    HttpResponseValidator { sinewErrorBody() }                      // HttpStatusError for processApiCall
+    followRedirects = false; install(SinewRedirect)                 // optional: a hop limit, cookies dropped across hosts
+    install(SinewLog) { logger = HttpLogger { Timber.d(it) } }      // debug only, installed last
+}
+```
+
+| Plugin | Order | Fails fast when |
+|---|---|---|
+| `sinewBackend(url)` | any: a config function, not a plugin, since it sets `defaultRequest` | the URL is blank |
+| `SinewAuth` | any: Ktor's redirect and validator always wrap it | no `tokenSource`, or an anonymous path without `/`; no base URL (from `sinewBackend` or its own `baseUrl`) on the first request |
+| `SinewHeaders` | any: `ContentNegotiation` adds `Accept` later, in the body phase | |
+| `SinewTimeouts` | any | a timeout isn't positive; `HttpTimeout` missing (on the first request) |
+| `sinewErrorBody` | any: it's part of Ktor's own validator, outermost | |
+| `SinewRedirect` | before `SinewAuth`, so each hop gets its own token decision | Ktor's `HttpRedirect` is on (`followRedirects` not `false`) |
+| `SinewLog` | last, for one line per hop and replay | |
+
+The optional preset installs all of them from one `SinewConfig`:
+
 ```kotlin
 public object SinewHttp {
-    public fun client(                                              // on the platform engine: OkHttp (android, jvm), Darwin (ios), Js (wasmJs)
-        config: SinewConfig,
-        tokenSource: TokenSource,                                   // #19
-        logger: HttpLogger = HttpLogger.Default,                    // where the redacted log goes when config.logHttp is on
-        configure: HttpClientConfig<*>.() -> Unit = {},
-    ): HttpClient
-    public fun <T : HttpClientEngineConfig> client(                 // an explicit engine, so configure can reach engine { } (pinning)
-        config: SinewConfig, tokenSource: TokenSource, engine: HttpClientEngineFactory<T>,
-        logger: HttpLogger = HttpLogger.Default, configure: HttpClientConfig<T>.() -> Unit = {},
-    ): HttpClient
-    public suspend fun resetAuth(client: HttpClient)                // #19
+    public fun client(config: SinewConfig, tokenSource: TokenSource, logger: HttpLogger = HttpLogger.Default, configure: HttpClientConfig<*>.() -> Unit = {}): HttpClient
+    public fun <T : HttpClientEngineConfig> client(config: SinewConfig, tokenSource: TokenSource, engine: HttpClientEngineFactory<T>, logger: HttpLogger = HttpLogger.Default, configure: HttpClientConfig<T>.() -> Unit = {}): HttpClient
+    public suspend fun resetAuth(client: HttpClient)                // works on any client with SinewAuth installed
 }
-
-// Both build the same pipeline, in this order:
-expectSuccess = false                                               // Sinew validates responses itself
-followRedirects = false                                             // SinewRedirect follows them
-install(SinewHeaders) { locale = config.locale; defaults = config.defaultHeaders }   // before ContentNegotiation, so a request's own Accept wins
-install(ContentNegotiation) { json(SinewJson) }                     // ignoreUnknownKeys, explicitNulls = false, coerceInputValues = true
-install(HttpTimeout)
-defaultRequest { url(config.baseUrl + "/") }                        // a trailing slash, so relative paths resolve under baseUrl's path
-install(SinewTimeout) { connect = …; read = …; write = … }          // unless the request set its own timeout { }
-HttpResponseValidator { validateResponse { r -> if (!r.status.isSuccess()) throw HttpStatusError(…) } }   // a default plugin: outermost
-install(SinewRedirect)                                              // GET/HEAD, at most 5 hops
-install(SinewAuth) { … }                                            // #19: inside the redirect, so every hop decides its own token
-if (config.logHttp) install(SinewLog) { this.logger = logger }      // innermost: one line per exchange, hops and replays included
-configure()
 ```
 
 #### The auth plugin {#kotlin-the-auth-plugin}
@@ -360,7 +376,7 @@ internal val SinewAuth = createClientPlugin("SinewAuth", ::SinewAuthConfig) {
         when (outcome) {
             RefreshOutcome.Refreshed -> execute(request.apply {
                 attributes.put(Replayed, Unit); headers.remove(HttpHeaders.Authorization); cfg.source.accessToken()?.let { bearerAuth(it) } })
-            RefreshOutcome.Rejected -> { cfg.source.clear(); throw SessionRejected() }
+            RefreshOutcome.Rejected -> call                                                    // the 401: the validator throws, the guard maps it
             is RefreshOutcome.Unavailable -> throw outcome.cause                               // already an SinewException: passes through
         }
     }
@@ -372,33 +388,42 @@ internal val SinewAuth = createClientPlugin("SinewAuth", ::SinewAuthConfig) {
 | `SingleFlightRefresher` | holds a `Mutex` and the in-flight `Deferred<RefreshOutcome>`, started with `scope.async`. Waiters `await` it. Cancelling a waiter cancels only its own wait, never the refresh. `resetAuth` cancels the scope's children and starts fresh. |
 | The sent-token check | a 401 for a request sent with an older token replays at once, so ten requests produce exactly one refresh even when some 401s arrive after it finished |
 | The replay | goes through `execute` like any request. Its failure (a second 401, a 500) is returned to its caller; nothing waits on it, so it can't block the plugin. |
-| `SessionRejected` | mapped to `UnauthorizedException` by the handlers |
+| `Rejected` | returns the 401 response; the source has already ended the session if it was still current |
 
 The refresh call itself is made by the `TokenSource`. With Sinew's `SessionTokenSource`, the app's `RefreshCall` uses a separate `HttpClient` without `SinewAuth`, so a refresh can never refresh itself.
 
 #### `SessionTokenSource` and the session epoch {#kotlin-sessiontokensource-and-the-session-epoch}
 
 ```kotlin
-public class SessionTokenSource(private val store: RefreshTokenStore, private val call: RefreshCall) : TokenSource {
+public class SessionTokenSource(
+    private val store: RefreshTokenStore,
+    private val call: RefreshCall,
+    private val onSessionEnded: suspend () -> Unit = {},           // on clear(), and when the backend rejects the refresh token
+) : TokenSource {
     private val mutex = Mutex()
     private var epoch = 0L
-    @Volatile private var access: String? = null
+    private val access = AtomicReference<String?>(null)
 
-    override fun accessToken(): String? = access
+    override fun accessToken(): String? = access.load()
+    public suspend fun start(accessToken: String, refreshToken: String): Unit = mutex.withLock { epoch++; store.write(refreshToken); access.store(accessToken) }
+
     override suspend fun refresh(): RefreshOutcome {
-        val started = mutex.withLock { epoch }
-        val refreshToken = store.read() ?: return RefreshOutcome.Rejected
-        val result = call.refresh(refreshToken)
-        return mutex.withLock {
-            if (epoch != started) return@withLock RefreshOutcome.Rejected          // signed out meanwhile: store nothing
-            when (result) {
-                is RefreshResult.Tokens -> { store.write(result.refresh); access = result.access; RefreshOutcome.Refreshed }
-                RefreshResult.Rejected -> RefreshOutcome.Rejected
-                is RefreshResult.Unavailable -> RefreshOutcome.Unavailable(result.cause)
+        val (started, refreshToken) = mutex.withLock { epoch to store.read() }
+        if (refreshToken == null) return endIfStill(started)
+        val answer = when (val r = processCall("AUTH", "REFRESH", Repository, emptyList()) { call.refresh(refreshToken) }) {
+            is Result.Failure -> return RefreshOutcome.Unavailable(r.error)              // a throw keeps the session
+            is Result.Success -> r.data
+        }
+        return when (answer) {
+            is RefreshResult.Unavailable -> RefreshOutcome.Unavailable(answer.cause)
+            RefreshResult.Rejected -> endIfStill(started)                                 // ends the session only if it's still this one
+            is RefreshResult.Tokens -> mutex.withLock {
+                if (epoch != started) return@withLock RefreshOutcome.Rejected            // signed out or in meanwhile: store nothing
+                store.write(answer.refresh); access.store(answer.access); RefreshOutcome.Refreshed
             }
         }
     }
-    override suspend fun clear(): Unit = mutex.withLock { epoch++; access = null; store.delete() }
+    override suspend fun clear() { mutex.withLock { epoch++; access.store(null); store.delete() }; onSessionEnded() }
 }
 ```
 
@@ -539,6 +564,12 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **`SinewRedirect` is Sinew's own**, because Ktor's `HttpRedirect` has no hop limit. It follows Ktor's rules (GET/HEAD only, no `https` → `http`), adds the 5-hop limit, drops `Cookie` as well as `Authorization` across hosts, counts another port as another host, and reuses the caller's request builder so a hop stays tied to the caller's cancellation.
 - **`SinewLog` replaces Ktor's `Logging`**: one line per exchange (`GET api.example.com/v1/orders → 200 (84 ms)`, or the failure's type), never a header, a body, a query string or an exception message. Nothing secret is read, so nothing needs redacting. The app passes an `HttpLogger`.
 - **`tokenSource` and devtools `hooks` arrive later**: `tokenSource` with `SinewAuth` (#19), `hooks` with DevTools (S7).
+- **`SinewAuth` is an `on(Send)` client plugin**, installed inside `SinewRedirect`. The `SingleFlightRefresher` lives in the client's attributes, so `resetAuth(client)` finds it; `onClose` cancels its scope. Refreshes run in a `SupervisorJob` scope on `Dispatchers.Default`, injectable internally so tests run every interleaving on the test dispatcher.
+- **`resetAuth` cancels the running refresh and completes its waiters as `Rejected`** at once, rather than leaving them to wait for a backend that no longer matters.
+- **`FakeTokenSource` is in `sinew-testing`**: counts refreshes and clears, rotates `token-1` → `token-2`, and takes an `onRefresh` lambda to gate a refresh on a `CompletableDeferred`. Like a real source, a `Rejected` refresh ends its session.
+- **Testing:** every Review Focus 1 case on `MockEngine` with the engine and the refresher on one `StandardTestDispatcher`, on all four targets, plus a JVM test with fifty requests on real threads, twenty rounds, one refresh each.
+- **Plugins first, preset second** (decided 2026-10-11). `SinewAuth`, `SinewHeaders`, `SinewTimeouts`, `SinewRedirect`, `SinewLog` and `sinewErrorBody` are public and installable alone; `SinewHttp.client` is an optional preset built from them. Ktor installs its own `HttpRedirect` and validator before any user plugin, so with Ktor's redirect each hop already passes through `SinewAuth`, and Ktor drops `Authorization` across hosts itself. `SinewRedirect` is opt-in, for the hop limit and dropped cookies.
+- **The base URL is written once, with `sinewBackend(url)`.** Ktor keeps `defaultRequest`'s URL in a lambda no plugin can read back, so a hand-built client would otherwise repeat it for `SinewAuth`. `sinewBackend` sets `defaultRequest` (with the trailing slash) and records the URL in the client's attributes. `SinewAuth` reads it on the first request, so the two may be declared in any order; its own `baseUrl` overrides it for a client that sets `defaultRequest` itself. `SinewConfig` feeds only the preset.
 
 :::
 
