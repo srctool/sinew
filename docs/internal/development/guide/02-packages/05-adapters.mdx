@@ -54,11 +54,11 @@ Conversions with Riverpod's `AsyncValue`. `ViewState` is modelled on it, so an `
 
 | `AsyncValue<T>` | `ViewState<T>` |
 |---|---|
-| `AsyncLoading`, previous value kept | `Loading(data: previous)` |
+| loading (`isLoading`: an `AsyncLoading`, or a refresh or retry still loading), previous value kept | `Loading(data: previous)` |
 | `AsyncData(value)` | `Done(data)` |
 | `AsyncError(error, stackTrace)`, previous value kept | `Failed(data: previous, error, stackTrace)`. An error that isn't an `SinewException` becomes `UnexpectedException` with layer `VM`. |
 
-The mapping is one-to-one in both directions. `ViewState.toAsyncValue()` drops `Done`'s backend message, which `AsyncValue` has no place for.
+`toViewState` is exact. `toAsyncValue` drops the previous data of `Loading` and `Failed`: Riverpod 3 attaches a previous value only internally, as a provider rebuilds, so there's no public way to build one.
 
 Ready providers (`sinew_riverpod_providers`): one per Sinew service, built from a config provider the app overrides once at its root:
 
@@ -266,20 +266,20 @@ A Flutter app's page logic lives in a Riverpod notifier, which already extends R
 #### The mixins {#dart-the-mixins}
 
 ```dart
-mixin StateEffectNotifier<S, F> on $Notifier<S> {          // $Notifier: the base of both Notifier and the generated _$X classes
-  EffectEmitter<F>? _emitter;
-  Stream<F> get effects => (_emitter ??= _createEmitter()).stream;
-  @protected void setState(S Function(S) reduce) => state = reduce(state);
-  @protected void emitEffect(F effect) => (_emitter ??= _createEmitter()).emit(effect);
-  EffectEmitter<F> _createEmitter() {
-    final e = EffectEmitter<F>();
-    ref.onDispose(() { e.dispose(); _emitter = null; });   // a rebuild disposes it: the next use creates a fresh one
-    return e;
+mixin StateEffectNotifier<S, F> on AnyNotifier<S, S> {       // a Notifier<S> or a generated _$X; Riverpod's named base for mixins
+  final _emitter = EffectEmitter<F>();                      // one per notifier: a rebuild keeps the instance, and the emitter
+  Stream<F> get effects => _emitter.stream;                 // the same stream across rebuilds
+  @override
+  WhenComplete runBuild() {                                 // every build registers again: rebuilds clear onDispose callbacks
+    ref.onDispose(() { if (!ref.mounted) _emitter.dispose(); });   // a rebuild stays mounted; a real dispose doesn't
+    return super.runBuild();
   }
+  @protected void setState(S Function(S) reduce) { if (!ref.mounted) return; state = reduce(state); }
+  @protected void emitEffect(F effect) => _emitter.emit(effect);  // the emitter ignores it once disposed
 }
 
-mixin EventActionNotifier<S, E, A, F> on $Notifier<S>, StateEffectNotifier<S, F> {     // requires StateEffectNotifier mixed in first
-  void onEvent(E event) { final action = mapEventToAction(event); if (action != null) onAction(action); }
+mixin EventActionNotifier<S, E, A, F> on StateEffectNotifier<S, F> {     // mixed in after StateEffectNotifier
+  void onEvent(E event) { if (!ref.mounted) return; final action = mapEventToAction(event); if (action != null) unawaited(onAction(action)); }
   @protected A? mapEventToAction(E event);
   @protected Future<void> onAction(A action);
 }
@@ -327,10 +327,10 @@ class OrderListPage extends HookConsumerWidget {
 
 ```dart
 extension AsyncToViewState<T> on AsyncValue<T> {
-  ViewState<T> toViewState(String module, String function);    // AsyncLoading → Loading(previous), AsyncData → Done, AsyncError → Failed
+  ViewState<T> toViewState(String module, String function);    // isLoading → Loading(previous), AsyncData → Done, AsyncError → Failed
 }
 extension ViewStateToAsync<T> on ViewState<T> {
-  AsyncValue<T> toAsyncValue();                                   // Done's message is dropped
+  AsyncValue<T> toAsyncValue();                                   // Loading's and Failed's previous data are dropped
 }
 ```
 
@@ -351,7 +351,7 @@ final networkCheckerProvider = Provider<NetworkChecker>((ref) { final c = Networ
 
 | Name | Dart | Package |
 |---|---|---|
-| `StateEffectNotifier<S, F>`, `EventActionNotifier<S, E, A, F>` | mixins on `$Notifier<S>` | `sinew_riverpod` |
+| `StateEffectNotifier<S, F>`, `EventActionNotifier<S, E, A, F>` | mixins on `AnyNotifier<S, S>` | `sinew_riverpod` |
 | `useOnOpened`, `useEffects` | hooks | `sinew_riverpod` |
 | `toViewState`, `toAsyncValue` | extensions | `sinew_riverpod` |
 | providers (`sinewConfigProvider`, `refreshCallProvider` overridden by the app), `useNetworkChecker` | as above | `sinew_riverpod_providers` |
@@ -374,11 +374,21 @@ final networkCheckerProvider = Provider<NetworkChecker>((ref) { final c = Networ
 | An `AsyncNotifier` page | It keeps `AsyncValue` and converts with `toViewState` where it meets Sinew code. The mixins are for `Notifier`s. |
 | Riverpod's generated base class changes in a minor release | The mixins' `on` clause is checked against it by step 2 on every Riverpod upgrade. |
 
+:::tip[Settled during S2 (2026-10-11)]
+
+- **The mixins are `on AnyNotifier<S, S>`, not `on $Notifier<S>`.** In Riverpod 3.4, `$Notifier` is `@internal` (for generated code only), while `AnyNotifier` is public and documented as the base to write notifier mixins on. `Notifier<S>` and a generated `_$X` are both `AnyNotifier<S, S>`; an `AsyncNotifier` (`AnyNotifier<AsyncValue<T>, T>`) isn't, as intended.
+- **One emitter per notifier, kept across rebuilds.** `ref.invalidateSelf()` keeps the notifier instance and only reruns `build`, so resetting the emitter on `onDispose` would close the page's subscription and lose every later effect. The mixin registers its dispose callback in `runBuild()` on every build, and disposes the emitter only when `ref.mounted` is false inside it, which holds for `container.dispose()` and auto-dispose but not for a rebuild.
+- **`setState` and `onEvent` check `ref.mounted`**: Riverpod 3 throws on `state` after dispose, and an action finishing late must stay harmless.
+- **`toViewState` reads `isLoading` before the type.** Riverpod represents a refresh as an `AsyncData` and a retry as an `AsyncError`, both still loading, so a type match would show a pull-to-refresh as `Done`. It doesn't report a wrapped error, since it runs on every build.
+- **`toAsyncValue` drops previous data**, because `copyWithPrevious` is `@internal` in Riverpod 3.
+- **`useNetworkChecker` moves to `sinew_riverpod_providers` (#34)**, as §2 already places it: it needs `NetworkChecker` from S3. **The example's order list** is #36 (S5).
+- **Testing:** the mixins in a `ProviderContainer`, including a `riverpod_generator` notifier with its `.g.dart` committed in `test/`; the hooks in widget tests; one test per conversion row, plus refresh, reload and retry. Codegen needs `build_runner` 2.16.1: 2.16.2 requires analyzer 14, which the workspace's `test` doesn't allow yet.
+
+:::
+
 :::info[Decided by default (revisit during implementation)]
 
 - **Two mixins applied together**, `StateEffectNotifier` first, because `EventActionNotifier` declares it in its `on` clause (Dart mixins can't extend each other).
-- **`on $Notifier<S>`** as the mixin constraint, because Riverpod 3's generated `_$X` classes extend `$Notifier<S>`, not `Notifier<S>`. Verify the exact base-class name and its import against Riverpod 3.4 at S2.
-- **The emitter is reset on dispose**, because `ref.onDispose` also fires on a rebuild. Without the reset, effects after a rebuild would go to a disposed emitter.
 
 :::
 
