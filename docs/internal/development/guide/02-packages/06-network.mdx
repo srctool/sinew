@@ -292,6 +292,9 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 - **`HttpStatusError` is internal.** It only travels from the client to `processApiCall`, which turns it into a `SinewException`; apps never see it, and it can open up later if an app needs it. Its own message names only the status (`HTTP 422`), because an error body may hold personal data and exception messages reach logs and crash reports.
 - **One `SinewConfig` per backend**, not per endpoint. Per-endpoint needs stay on the request: `anonymousPaths` for sign-in and refresh, a header on the call, and a per-request timeout for a slow endpoint, which the timeout layer must leave alone.
 - **`Retry-After`** accepts delay-seconds and the IMF-fixdate form (`Wed, 21 Oct 2015 07:28:00 GMT`). A date in the past is a zero wait. The obsolete RFC 850 and asctime forms, a negative or fractional number, or anything else is treated as no header.
+- **The log reads nothing secret**: one line per exchange with the method, host, path, status and duration (or the failure's type). No header, body, query string or exception message, so a token can't reach it.
+- **Redirects**: at most 5 hops, never from `https` to `http`, and a hop to another host or port drops `Cookie` as well as `Authorization`.
+- **A request's own timeout and headers win** over the client's defaults, so a slow endpoint sets its deadline on that call.
 
 :::
 
@@ -309,31 +312,32 @@ This note builds the base network design on **Ktor 3**: one configured `HttpClie
 
 ```kotlin
 public object SinewHttp {
-    public fun client(
+    public fun client(                                              // on the platform engine: OkHttp (android, jvm), Darwin (ios), Js (wasmJs)
         config: SinewConfig,
-        tokenSource: TokenSource,
-        engine: HttpClientEngineFactory<*> = platformEngine(),      // OkHttp (android, jvm), Darwin (ios), Js (wasmJs)
-        hooks: SinewHttpHooks = SinewHttpHooks.None,                // devtools recorder and fault injection
-        configure: HttpClientConfig<*>.() -> Unit = {},             // the app's extras: pinning, a custom engine setting
-    ): HttpClient = HttpClient(engine) {
-        expectSuccess = false                                        // Sinew validates responses itself, after SinewAuth has seen them
-        followRedirects = false                                      // SinewRedirect follows them, dropping the token across hosts
-        install(ContentNegotiation) { json(SinewJson) }             // ignoreUnknownKeys, explicitNulls = false, coerceInputValues = true
-        install(HttpTimeout)                                         // per request, set by SinewTimeout
-        defaultRequest { url(config.baseUrl) }
-        install(SinewTimeout) { read = config.readTimeout; write = config.writeTimeout; connect = config.connectTimeout }
-        install(SinewHeaders) { locale = config.locale; defaults = config.defaultHeaders }
-        install(SinewAuth) { source = tokenSource; anonymousPaths = config.anonymousPaths; baseUrl = Url(config.baseUrl) }
-        install(SinewRedirect)                                       // GET/HEAD only, at most 5 hops
-        HttpResponseValidator { validateResponse { r -> if (!r.status.isSuccess()) throw HttpStatusError.from(r, config.errorBodyReader) } }
-        install(SinewFaults) { this.hooks = hooks }
-        install(SinewRecorder) { this.hooks = hooks }
-        if (config.logHttp) install(Logging) { level = LogLevel.INFO; sanitizeHeader { it in RedactedHeaders } }
-        configure()
-    }
-    public suspend fun resetAuth(client: HttpClient)
-    public fun debugExpireToken(client: HttpClient)                  // devtools only
+        tokenSource: TokenSource,                                   // #19
+        logger: HttpLogger = HttpLogger.Default,                    // where the redacted log goes when config.logHttp is on
+        configure: HttpClientConfig<*>.() -> Unit = {},
+    ): HttpClient
+    public fun <T : HttpClientEngineConfig> client(                 // an explicit engine, so configure can reach engine { } (pinning)
+        config: SinewConfig, tokenSource: TokenSource, engine: HttpClientEngineFactory<T>,
+        logger: HttpLogger = HttpLogger.Default, configure: HttpClientConfig<T>.() -> Unit = {},
+    ): HttpClient
+    public suspend fun resetAuth(client: HttpClient)                // #19
 }
+
+// Both build the same pipeline, in this order:
+expectSuccess = false                                               // Sinew validates responses itself
+followRedirects = false                                             // SinewRedirect follows them
+install(SinewHeaders) { locale = config.locale; defaults = config.defaultHeaders }   // before ContentNegotiation, so a request's own Accept wins
+install(ContentNegotiation) { json(SinewJson) }                     // ignoreUnknownKeys, explicitNulls = false, coerceInputValues = true
+install(HttpTimeout)
+defaultRequest { url(config.baseUrl + "/") }                        // a trailing slash, so relative paths resolve under baseUrl's path
+install(SinewTimeout) { connect = …; read = …; write = … }          // unless the request set its own timeout { }
+HttpResponseValidator { validateResponse { r -> if (!r.status.isSuccess()) throw HttpStatusError(…) } }   // a default plugin: outermost
+install(SinewRedirect)                                              // GET/HEAD, at most 5 hops
+install(SinewAuth) { … }                                            // #19: inside the redirect, so every hop decides its own token
+if (config.logHttp) install(SinewLog) { this.logger = logger }      // innermost: one line per exchange, hops and replays included
+configure()
 ```
 
 #### The auth plugin {#kotlin-the-auth-plugin}
@@ -517,7 +521,7 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 :::info[Decided by default (revisit during implementation)]
 
 - **A custom `SinewAuth` plugin** instead of Ktor's `Auth` bearer provider, because the three-way `RefreshOutcome` and the shared failure cause can't be expressed with it.
-- **Sinew validates responses itself** (`expectSuccess = false` plus a validator) and follows redirects itself, so the order relative to `SinewAuth` is known. Verify at S3 that the validator runs after `HttpSend` interceptors on all four engines.
+- **Sinew validates responses itself** (`expectSuccess = false` plus a validator) and follows redirects itself, so the order relative to `SinewAuth` is known. Verified at S3 (see below).
 - **No insecure-certificate option in Sinew.** The base note allowed a debug-only option. On Kotlin, the app's debug source set configures the engine itself, which keeps the option out of Sinew's API entirely.
 - **`NetworkChecker.status` as a `StateFlow`**, the Kotlin idiom for "current value plus changes".
 
@@ -528,6 +532,13 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **`SinewConfig` is a plain class**, not a `data class`: it holds lambdas (`locale`, `defaultHeaders`), whose equality would be meaningless.
 - **`TokenSource.clear()` is `suspend`**, so an implementation can take the same `Mutex` as `refresh()`. Its KDoc states the epoch contract for app-written sources.
 - **`HttpStatusError` is `internal`**, with `retryAfter` as a `kotlin.time.Duration`, parsed by an internal `parseRetryAfter(value, now)` with kotlinx-datetime's `RFC_1123` format, so the clock is injectable in tests.
+- **The validator wraps every Sinew plugin, verified in Ktor 3.6.0's source.** `HttpCallValidator` is a default plugin, installed before any user plugin, and `HttpSend` makes the first-registered interceptor the outermost. So it sees only the final response, after redirects and (from #19) after `SinewAuth`. The pipeline is engine-independent, and the tests run it on `MockEngine` on all four targets.
+- **Two `client` overloads.** With `HttpClientConfig<*>`, `configure` can't call `engine { }`, so certificate pinning wouldn't compile. The platform-engine overload covers common code; the typed one takes `OkHttp`, `Darwin` or `Js` and reaches its config.
+- **API paths are relative** (`get("orders")`). The client adds a trailing slash to `baseUrl`; a leading `/` would replace the base path.
+- **The request's own settings win**: a `timeout { }` on the call is kept, and a header it sets isn't overwritten. An own `Accept` also excludes JSON from `ContentNegotiation`, which would otherwise add it beside.
+- **`SinewRedirect` is Sinew's own**, because Ktor's `HttpRedirect` has no hop limit. It follows Ktor's rules (GET/HEAD only, no `https` → `http`), adds the 5-hop limit, drops `Cookie` as well as `Authorization` across hosts, counts another port as another host, and reuses the caller's request builder so a hop stays tied to the caller's cancellation.
+- **`SinewLog` replaces Ktor's `Logging`**: one line per exchange (`GET api.example.com/v1/orders → 200 (84 ms)`, or the failure's type), never a header, a body, a query string or an exception message. Nothing secret is read, so nothing needs redacting. The app passes an `HttpLogger`.
+- **`tokenSource` and devtools `hooks` arrive later**: `tokenSource` with `SinewAuth` (#19), `hooks` with DevTools (S7).
 
 :::
 
