@@ -285,6 +285,16 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 
 :::
 
+:::tip[Settled during S3 (2026-10-11)]
+
+- **`SinewConfig` fails fast**: a blank `baseUrl`, a timeout that isn't positive, or an anonymous path without a leading `/` throws when the config is built, not on the first request.
+- **The default `ErrorBodyReader`** reads a JSON object only. A blank `message`, blank or non-string field messages and empty field lists are dropped; a field may hold one string instead of a list. An object with neither a message nor field errors, `{}` included, is unreadable (`null`).
+- **`HttpStatusError` is internal.** It only travels from the client to `processApiCall`, which turns it into a `SinewException`; apps never see it, and it can open up later if an app needs it. Its own message names only the status (`HTTP 422`), because an error body may hold personal data and exception messages reach logs and crash reports.
+- **One `SinewConfig` per backend**, not per endpoint. Per-endpoint needs stay on the request: `anonymousPaths` for sign-in and refresh, a header on the call, and a per-request timeout for a slow endpoint, which the timeout layer must leave alone.
+- **`Retry-After`** accepts delay-seconds and the IMF-fixdate form (`Wed, 21 Oct 2015 07:28:00 GMT`). A date in the past is a zero wait. The obsolete RFC 850 and asctime forms, a negative or fractional number, or anything else is treated as no header.
+
+:::
+
 ## Implementation {#implementation}
 
 <KotlinOnly>
@@ -510,6 +520,14 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **Sinew validates responses itself** (`expectSuccess = false` plus a validator) and follows redirects itself, so the order relative to `SinewAuth` is known. Verify at S3 that the validator runs after `HttpSend` interceptors on all four engines.
 - **No insecure-certificate option in Sinew.** The base note allowed a debug-only option. On Kotlin, the app's debug source set configures the engine itself, which keeps the option out of Sinew's API entirely.
 - **`NetworkChecker.status` as a `StateFlow`**, the Kotlin idiom for "current value plus changes".
+
+:::
+
+:::tip[Settled during S3 (2026-10-11)]
+
+- **`SinewConfig` is a plain class**, not a `data class`: it holds lambdas (`locale`, `defaultHeaders`), whose equality would be meaningless.
+- **`TokenSource.clear()` is `suspend`**, so an implementation can take the same `Mutex` as `refresh()`. Its KDoc states the epoch contract for app-written sources.
+- **`HttpStatusError` is `internal`**, with `retryAfter` as a `kotlin.time.Duration`, parsed by an internal `parseRetryAfter(value, now)` with kotlinx-datetime's `RFC_1123` format, so the clock is injectable in tests.
 
 :::
 
