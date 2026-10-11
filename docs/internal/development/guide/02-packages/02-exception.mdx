@@ -54,7 +54,7 @@ SinewException { …, message: ErrorMessage }
 
 **Why keys, resolved at render time.** An exception is created in the data layer, which has no locale and no UI context. If it carried finished text, that text would be frozen in the page state: switching the app's language would leave an error on screen in the old language. So a local message stays a key plus arguments until the page renders it. `ViewState.Failed` and `Result.failure` keep the `SinewException`, never pre-rendered text.
 
-**Arguments and plurals.** Keys take named arguments, `{ "seconds": 30 }` or `{ "attempts": 3 }`. Translations use each platform's plural rules (ICU messages in Flutter ARB files, `plurals` in Compose resources), so "1 second" and "30 seconds" both read correctly.
+**Arguments and plurals.** Keys take named arguments, such as `{ "seconds": 30 }`. Translations use each platform's plural rules (ICU messages in Flutter ARB files, `plurals` in Compose resources), so "1 second" and "30 seconds" both read correctly.
 
 #### The built-in types
 
@@ -68,7 +68,7 @@ SinewException { …, message: ErrorMessage }
 | `ForbiddenException` | FOR | no | | server if readable, else local | `sinew.error.forbidden` | You don't have access to this. |
 | `NotFoundException` | NTF | no | | server if readable, else local | `sinew.error.notFound` | This item no longer exists. |
 | `ConflictException` | CFL | no | | server if readable, else local | `sinew.error.conflict` | This was changed by someone else. Reload and try again. |
-| `RateLimitedException` | RTL | yes | `retryAfter: Duration?` | server if readable, else local | `sinew.error.rateLimited` (`seconds`), or `sinew.error.rateLimitedNoTime` | Too many attempts. Try again in \{seconds\} seconds. |
+| `RateLimitedException` | RTL | yes | `retryAfter: Duration?` | server if readable, else local | `sinew.error.rateLimited` (`seconds`), or `sinew.error.rateLimitedNoTime` | Too many attempts. Try again in \{seconds\} seconds. / Too many attempts. Try again in a moment. |
 | `ServerException` | SRV | no | `status: Int` | server if readable, else local | `sinew.error.server` | Something went wrong on our side. |
 | `ServiceUnavailableException` | SUN | yes | `status: Int` | server if readable, else local | `sinew.error.unavailable` | The service is busy. Please try again. |
 | `ApiErrorException` | AE | no | | server | | (the backend's message) |
@@ -236,7 +236,7 @@ This is the one documented global in Sinew. Tests install a recording reporter a
    - a missing translation falls back to English, never the raw key;
    - arguments substituted;
    - the code appended, except on validation field messages.
-8. `sinew_l10n`: English and Indonesian for every built-in key. A test checks that both languages define every key and the same arguments, and that plural forms exist for `seconds` and `attempts`.
+8. `sinew_l10n`: English and Indonesian for every built-in key. A test checks that both languages define every key and the same arguments, and that the plural for `seconds` exists. (`attempts` belonged to the removed `RetryExceededException`; no built-in key uses it.)
 
 **Done when**
 - [ ] Every built-in type exists with a unique code, a unique `sinew.` key (when local) and an English fallback with no technical detail.
@@ -366,7 +366,17 @@ Resource names replace the dots in keys with underscores (`sinew.error.noInterne
 
 ```kotlin
 @Composable public fun rememberSinewLocalizer(appStrings: Localizer? = null): Localizer   // the app's strings first, then Sinew's
+
+public object SinewStrings {
+    public val keys: Set<String>
+    public suspend fun resolve(key: String, args: Map<String, Any> = emptyMap(),
+                               environment: ResourceEnvironment = getSystemResourceEnvironment()): String?
+}
 ```
+
+Compose resources are read asynchronously (a fetch on web), but `Localizer.resolve` is synchronous, because pages render with it. So `rememberSinewLocalizer` preloads Sinew's plain strings for the current language, keyed on `rememberResourceEnvironment()`, and serves them from a snapshot-state cache. A text not loaded yet (a plural with a new number) resolves to `null` for one frame, which shows the English fallback, and loads in the background; the page recomposes when it lands. A plural's quantity is its first numeric argument.
+
+**Escaping:** Compose resources don't unescape `\'` the way Android resources do, so apostrophes are written plainly (`You're offline.`). A test checks every English resource equals the exception's English fallback, which catches a stray backslash.
 
 #### Indonesian texts {#kotlin-indonesian-texts}
 
@@ -400,7 +410,7 @@ The same texts are used by the Flutter ARB files, so both platforms read identic
 | `Localizer` | `public fun interface Localizer` |
 | `displayMessage` | `public fun SinewException.displayMessage(localizer: Localizer?): String` |
 | `rememberSinewLocalizer` | `@Composable public fun rememberSinewLocalizer(appStrings: Localizer? = null): Localizer` (`sinew-l10n`) |
-| `SinewStrings` | `public object SinewStrings { public suspend fun resolve(key: String, args: Map<String, Any>): String? }` (`sinew-l10n`, non-Compose callers) |
+| `SinewStrings` | `public object SinewStrings { public val keys: Set<String>; public suspend fun resolve(key, args = emptyMap(), environment = getSystemResourceEnvironment()): String? }` (`sinew-l10n`, non-Compose callers) |
 
 ### 4. Build steps {#kotlin-4-build-steps}
 
@@ -408,7 +418,7 @@ The same texts are used by the Flutter ARB files, so both platforms read identic
 2. `ExceptionHandler`, `envelopeDataMissing`, `processResult`, tested as in the base note.
 3. `CrashReporter` with an `AtomicReference`-backed `current`, safe to read from any thread.
 4. `Localizer` and `displayMessage`, tested with a fake localizer.
-5. `sinew-l10n`: both `strings.xml` files, and a test that every key exists in both languages with the same arguments.
+5. `sinew-l10n`: both `strings.xml` files, and a test that every key exists in both languages with the same arguments. The locale-dependent tests run on the JVM: `ResourceEnvironment`'s constructor is internal to Compose, so they switch the JVM's default `Locale`, which the desktop environment follows, and need `compose.desktop.currentOs` (Skiko) on the test classpath.
 
 **Done when**
 - [ ] Every built-in type exists with its code, key and fallback, on all four targets.
