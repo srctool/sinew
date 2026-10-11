@@ -157,7 +157,7 @@ serverOrLocal(text, key) = text is not blank ? Server(text) : Local(key, fallbac
 | 5 | status 401 (after the auth layer gave up) | `UnauthorizedException` |
 | 6 | 403, 404, 409 | `ForbiddenException`, `NotFoundException`, `ConflictException` |
 | 7 | 429 | `RateLimitedException`, with `retryAfter` from the `Retry-After` header (seconds or an HTTP date) |
-| 8 | 500, 502 / 503, 504 | `ServerException` / `ServiceUnavailableException` |
+| 8 | 503, 504 / any other 5xx (500, 501, 502, 505…) | `ServiceUnavailableException` / `ServerException` |
 | 9 | any other non-2xx status with a readable message | `ApiErrorException` |
 | 10 | any other non-2xx status | `UndefinedErrorResponseException` |
 | 11 | JSON that doesn't fit the DTO, including an enum value the DTO can't fall back from | `ParseException` |
@@ -270,11 +270,20 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 | Offline at app start | Requests fail with `NoInternetConnectionException`. The network checker shows offline, and pages offer retry. |
 | A 429 with `Retry-After` | `RateLimitedException.retryAfter` is set, and the message names the wait. `retryWithBackoff` waits at least that long. |
 | A redirect | GET redirects are followed within the same host. A redirect to another host is followed without the `Authorization` header. |
+| A 5xx the table doesn't name (501, 505, 507…) | `ServerException`, with the backend's text if readable. Every 5xx is the backend's side, never `ApiErrorException` or `UndefinedErrorResponseException`. |
+| A 408 status | Not a timeout: rows 2 and 3 cover the client's own deadlines and connection failures. The server answered, so it falls to row 9 or 10 (`ApiErrorException` with readable text, `UndefinedErrorResponseException` otherwise). |
+| A TLS or certificate failure, including a pinning mismatch | `UnexpectedException`, reported. It's a security event, not "offline": showing the offline message would hide a misconfigured server or an interception. |
 | A 502 whose body is an HTML page from a proxy | The error-body reader returns null, so the message is the local `sinew.error.server`. |
 | An error body with an empty `message` | Treated as unreadable: the local message for the status is shown. |
 | An envelope `failure()` with an empty message | The same: the local generic (or validation) message is shown. |
 | The app's language changes mid-request | That request carries the old `Accept-Language`. The next one uses the new locale. |
 | An absolute URL to another host (a CDN image, a pre-signed upload) | No `Authorization` header is attached. |
+
+:::tip[Settled during S1 (2026-10-11)]
+
+- **Every 5xx except 503 and 504 is `ServerException`**, not only 500 and 502. A 408 status and TLS or certificate failures keep their catch-all rows: a 408 is a server answer (row 9 or 10), and a certificate failure is `UnexpectedException`, reported, on both platforms.
+
+:::
 
 ## Implementation {#implementation}
 
@@ -441,6 +450,8 @@ SinewHttp.client(config, tokens, configure = {
     engine { /* OkHttp: config { certificatePinner(pins) }   Darwin: handleChallenge { … } */ }
 })
 ```
+
+A TLS or certificate failure (OkHttp's `SSLException` family, Darwin's `NSURLErrorServerCertificate*` and `NSURLErrorSecureConnectionFailed`) matches neither the no-connection nor the timeout predicate, so it becomes `UnexpectedException` and is reported, as on Flutter. It's a security event, never shown as "offline".
 
 Sinew offers **no option** to accept invalid certificates. A local-development setup that needs it configures the engine in the app's debug source set only, so release code can't contain it.
 

@@ -39,7 +39,7 @@ What kind of failure it is decides who can do something about it: the user (retr
 | 404 on a read that expects the item | `NotFoundException` (NTF) | no | "No longer exists" |
 | 409 | `ConflictException` (CFL) | no | "Changed by someone else", reload |
 | 429 | `RateLimitedException` (RTL), with `retryAfter` when the backend sends it | later | "Try again in a moment" |
-| 500, 502 | `ServerException` (SRV) | no | generic error |
+| any 5xx except 503, 504 (500, 501, 502, 505…) | `ServerException` (SRV) | no | generic error |
 | 503, 504 | `ServiceUnavailableException` (SUN) | yes | generic error, retry |
 | A 2xx envelope whose `failure()` is set, or an error body with a readable message | `ApiErrorException` (AE), with the backend's message | no | the backend's message |
 | A non-2xx response whose body can't be read | `UndefinedErrorResponseException` (UER) | no | generic error |
