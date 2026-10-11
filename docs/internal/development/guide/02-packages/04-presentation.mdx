@@ -128,7 +128,7 @@ App-level state (the signed-in session, its role) and routing are the app's own.
 
 ```
 abstract class StateEffectHandler<S, F>(initial: S, scope) {        // scope: Kotlin CoroutineScope; Dart: none
-    state: S                                                         // read; observable (Kotlin StateFlow, Dart ValueListenable)
+    state: S                                                         // read; observable (Kotlin StateFlow, Dart a Stream<S> of new states)
     effects: stream of F                                             // Kotlin Flow, Dart Stream
     protected setState(reduce: S -> S)
     protected emitEffect(effect: F)
@@ -157,7 +157,7 @@ class EffectEmitter<F> {
 | Platform | State | Effects | Scope |
 |---|---|---|---|
 | Kotlin | `StateFlow<S>` | `Channel<F>(BUFFERED)` exposed as `Flow<F>` | a `CoroutineScope` passed in. `onAction` runs in `scope.launch`. |
-| Dart | a `ValueListenable<S>` | a stream that buffers while no one listens | none. `onAction` is an `async` method, not awaited by `onEvent`. |
+| Dart | `S state` plus a broadcast `Stream<S> states` (pure Dart has no `ValueListenable`) | a stream that buffers while no one listens | none. `onAction` is an `async` method, not awaited by `onEvent`. |
 
 ### 4. Build steps
 
@@ -322,7 +322,7 @@ abstract class StateEffectHandler<S, F> {
   StateEffectHandler(S initial) : _state = initial;
   S _state;
   S get state => _state;
-  Stream<S> get states;               // emits each new state
+  Stream<S> get states;               // emits each new state, skipping an equal one
   final _emitter = EffectEmitter<F>();
   Stream<F> get effects => _emitter.stream;
   @protected void setState(S Function(S) reduce) { if (_disposed) return; _state = reduce(_state); … }
@@ -372,6 +372,16 @@ On Flutter, a page sends `Opened` from `useOnOpened`, which runs once per page i
 |---|---|
 | Two widgets listen to `effects` at once | The second `listen` throws, as with any single-subscription stream. One listener per page. |
 | `onAction` throws | The `Future` completes with the error, which reaches the zone's error handler: a bug, visible in development and in crash reports (base review). |
+
+:::tip[Settled during S2 (2026-10-11)]
+
+- **State is `S get state` plus a broadcast `Stream<S> states`.** `ValueListenable` is Flutter's, and this package is pure Dart. A state equal to the current one isn't emitted, as with Kotlin's `StateFlow`.
+- **Effects are delivered in a microtask, one at a time, through a synchronous controller**, and only while the listener is active and not paused. An effect is never parked inside a subscription, so pausing or cancelling before delivery leaves it in the buffer for the next listener.
+- **`dispose()` drops the buffer.** Kotlin delivers what's buffered before the flow completes, but a disposed Dart page has nobody left to show it to.
+- **`emitEffect` relies on the emitter's own dispose guard**; `setState` and `onEvent` guard themselves.
+- **Testing:** the sample order list runs on `Pager` and `ControlledFetch` (dev dependencies), on the VM and in Chrome. Mutation checks cover buffering, pause, cancel, dispose and concurrency.
+
+:::
 
 :::info[Decided by default (revisit during implementation)]
 
