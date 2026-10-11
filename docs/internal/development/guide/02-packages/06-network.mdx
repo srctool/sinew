@@ -309,6 +309,9 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 - **A plain client works too.** Without the error-body reader, the HTTP library's own status errors (Ktor's `ResponseException`, Dio's `badResponse`) are classified by status, with the local message, since the body can't be read there.
 - **An envelope `failure()` with an empty field map** is an `ApiErrorException`, not a `ValidationException` with no fields.
 - **`RefreshResult.from(result)`** turns a guarded refresh call into its answer, so a `RefreshCall` is only the HTTP call. A refusal (401, 403, 400 or 422 for OAuth's `invalid_grant`, a readable refusal, any other 4xx except 408 and 429) is `Rejected`; everything else, a bug included, keeps the session as `Unavailable`.
+- **`retryWithBackoff` has no module or function**: its block already returns a guarded `Result`, so it never creates an exception. `poll` keeps them, for its `PollingTimeOutException`.
+- **A 429 asking for longer than `maxDelay` is returned at once**, not waited out, so the page shows "Try again in 120 seconds" instead of a long spinner. Within `maxDelay`, the retry waits at least `retryAfter`.
+- **`poll` uses equal jitter** (half the interval fixed, half random), so the interval still grows by 1.5× while clients spread out; `retryWithBackoff` keeps full jitter. A slow call still running at the timeout is cut, and the `PollingTimeOutException` carries the last retryable failure as its cause.
 
 :::
 
@@ -578,6 +581,7 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **`apiHandlers(module, function)` is public**, for an app guarding a call `processApiCall` doesn't wrap. `processOptionalApiCall` shares one implementation with a 404-is-null switch; a 404 is caught before the handlers run.
 - **Three `expect` predicates per platform**: `isEngineTimeout` (OkHttp's whole-call `InterruptedIOException("timeout")`, Darwin's `NSURLErrorTimedOut`; Ktor's own timeout types are common), `isNoConnection` (OkHttp's `UnknownHostException`, `ConnectException`, `NoRouteToHostException`, `SocketException`; Darwin's not-connected, host and lost-connection codes; on wasm, any non-HTTP failure while `navigator.onLine` is false) and `isSecurityFailure` (`SSLException`, `CertificateException`; Darwin codes -1206 to -1200; nothing on wasm, where the browser reports TLS like any `fetch` failure). Each target has its own predicate tests (`jvmTest`, `androidHostTest`, `iosTest`, `wasmJsTest`).
 - **Ktor's `ResponseException`** (`expectSuccess = true` without `sinewErrorBody`) becomes an `HttpStatusError` with no body, so it's classified by status and `Retry-After`.
+- **`poll` runs inside `withTimeoutOrNull`**, so its timeout follows virtual time in tests and cancels a call still in flight. Both helpers take an internal `Random`, so tests assert every delay exactly with "always longest" and "always shortest" stand-ins.
 
 :::
 
