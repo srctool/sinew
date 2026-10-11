@@ -156,13 +156,15 @@ public abstract class StateEffectViewModel<S, F>(initial: S) : ViewModel() {
     protected val currentState: S get() = _state.value
     private val emitter = EffectEmitter<F>()
     public val effects: Flow<F> = emitter.effects
+    protected val isCleared: Boolean get() = cleared
     protected fun setState(reduce: S.() -> S) { _state.update(reduce) }
     protected fun emitEffect(effect: F) { emitter.emit(effect) }
-    override fun onCleared() { emitter.dispose() }
+    init { addCloseable(AutoCloseable { cleared = true; emitter.dispose() }) }   // not onCleared(): an override without super can't leak it
 }
 
 public abstract class EventActionViewModel<S, E, A, F>(initial: S) : StateEffectViewModel<S, F>(initial) {
     public fun onEvent(event: E) {
+        if (isCleared) return                                  // as EventActionHandler after dispose: no mapping, no action
         val action = mapEventToAction(event) ?: return
         viewModelScope.launch { onAction(action) }
     }
@@ -173,9 +175,10 @@ public abstract class EventActionViewModel<S, E, A, F>(initial: S) : StateEffect
 @Composable
 public fun <F> ObserveEffects(effects: Flow<F>, onEffect: suspend (F) -> Unit) {
     val owner = LocalLifecycleOwner.current
+    val handle by rememberUpdatedState(onEffect)               // the latest lambda, without restarting the collection
     LaunchedEffect(effects, owner) {
         owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            withContext(Dispatchers.Main.immediate) { effects.collect(onEffect) }
+            withContext(Dispatchers.Main.immediate) { effects.collect { handle(it) } }
         }
     }
 }
@@ -234,6 +237,15 @@ There are no `AsyncValue` conversions on Kotlin: that's a Riverpod type.
 | Two `ObserveEffects` on the same effects flow | Not supported: the channel delivers each effect to one collector. One collector per screen. |
 | A non-Compose Android screen (Views) | It collects `effects` with `repeatOnLifecycle` itself. `ObserveEffects` is only a convenience. |
 | The view model is shared by two screens | Each screen gets `state`. Only one should collect `effects`. |
+
+:::tip[Settled during S2 (2026-10-11)]
+
+- **Clean-up through `addCloseable`**, not an `onCleared()` override, so a subclass that overrides `onCleared()` without calling `super` still closes the effects.
+- **Events after clearing are ignored**, `mapEventToAction` included, matching `EventActionHandler` after `dispose()`.
+- **`ObserveEffects` keeps the latest `onEffect`** with `rememberUpdatedState`; the collection restarts only when the flow or the lifecycle owner changes.
+- **Testing:** the `ViewModel` bases are tested through a real `ViewModelStore` with `Dispatchers.setMain`; `ObserveEffects` with `v2.runComposeUiTest` on the JVM, which needs `compose.desktop.currentOs` and `kotlinx-coroutines-swing` (the main dispatcher) on the test classpath, and must drain the Swing thread before asserting.
+
+:::
 
 :::info[Decided by default (revisit during implementation)]
 
