@@ -314,6 +314,7 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 - **`poll` uses equal jitter** (half the interval fixed, half random), so the interval still grows by 1.5× while clients spread out; `retryWithBackoff` keeps full jitter. A slow call still running at the timeout is cut, and the `PollingTimeOutException` carries the last retryable failure as its cause.
 - **`NetworkChecker` starts `Online`** until the platform first reports, so an app doesn't flash an offline banner at launch, and it **has a `close()`**: monitoring runs from creation until then, one checker per app. A captive portal counts as offline where the platform can tell (Android's validation).
 - **Auth is opt-out, through `anonymousPaths` only** (decided 2026-10-12). No per-request "anonymous" flag: anonymous endpoints are few (sign-in, register, OTP, password reset, refresh), so listing them once beats tagging every other endpoint, and a new endpoint gets the token unless someone deliberately lists it. Considered against the opt-in, per-endpoint header markers of an earlier in-house Dio package.
+- **Certificate pinning is part of the network package on both platforms**: set once per backend, checked at the TLS handshake before anything is sent, a failure reported as `UnexpectedException`, ignored in the browser. Pin an authority's or intermediate's key **plus a backup**, so a renewal doesn't lock users out. A pinning failure is never "offline", even when the HTTP library reports it behind another route's connection error.
 
 :::
 
@@ -491,13 +492,19 @@ Some engines report a timeout as a `CancellationException`. `processCall` tells 
 
 #### Certificate pinning and TLS {#kotlin-certificate-pinning-and-tls}
 
-Pinning goes in `configure`, on the engine:
+Pins are SHA-256 public-key hashes (`sha256/…`) for the base URL's host, set once in the config; the preset applies them on the engine:
 
 ```kotlin
-SinewHttp.client(config, tokens, configure = {
-    engine { /* OkHttp: config { certificatePinner(pins) }   Darwin: handleChallenge { … } */ }
-})
+SinewConfig(baseUrl = "https://api.shop.com/v1", …, certificatePins = setOf("sha256/…intermediate", "sha256/…backup"))
+// a hand-built client: engine { pinCertificates("api.shop.com", pins) }   (OkHttpConfig and DarwinClientEngineConfig)
 ```
+
+| Engine | How | When the pin is checked |
+|---|---|---|
+| OkHttp (Android, JVM) | `CertificatePinner` | during the handshake, before the request is written |
+| Darwin (iOS) | Ktor's port of `CertificatePinner`, through `handleChallenge` | at URLSession's authentication challenge, before the request is sent |
+| Js (wasm) | none: the browser owns TLS | ignored, documented |
+| any other (`MockEngine`) | none | building the client **throws**, so a pinned client never goes unpinned |
 
 A TLS or certificate failure (OkHttp's `SSLException` family, Darwin's `NSURLErrorServerCertificate*` and `NSURLErrorSecureConnectionFailed`) matches neither the no-connection nor the timeout predicate, so it becomes `UnexpectedException` and is reported, as on Flutter. It's a security event, never shown as "offline".
 
@@ -587,6 +594,10 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **`NetworkChecker : AutoCloseable`**, made with `NetworkChecker.create(PlatformContext)`. Android needs `ACCESS_NETWORK_STATE`, declared in `sinew-network`'s own manifest so apps get it merged; online is `NET_CAPABILITY_INTERNET` and `NET_CAPABILITY_VALIDATED` on the default network. iOS runs `NWPathMonitor` on its own serial queue. The JVM polls `NetworkInterface` on `Dispatchers.IO`. wasm talks to `window` through `js()` interop, because Kotlin 2.4 moved `kotlinx.browser` out of the standard library. `sinew-testing` gains `FakeNetworkChecker`.
 - **Testing per platform:** the Android status rule on the host; an **instrumented** test (`androidDeviceTest`, AndroidX Test runner 1.7.0 and ext-junit 1.3.0) that turns Wi-Fi and data off and on with `svc` through `UiAutomation`, run on an emulator locally until the CI device job (#30) exists; the real monitor on the iOS simulator; the window's events in the browser; the JVM poller on virtual time.
 - **A poller under test gets its own `TestCoroutineScheduler`, advanced by hand**, not `runTest`'s. `runTest` drains its clock when it ends, so a poller that `close()` failed to stop keeps scheduling its next tick and the test hangs instead of failing. A mutation check found this by hanging for an hour.
+- **Certificate pinning is a Sinew API** (#63, added after S3 for parity with Dart #20): `SinewConfig.certificatePins`, validated up front, applied by the preset on OkHttp and Darwin, with `pinCertificates(host, pins)` for hand-built clients. Kotlin pins public keys (a leaf, an intermediate or a root), finer than Dart, which can only pin whole authorities.
+- **A pinning failure behind a refused connection is still not "offline".** `localhost` (and any dual-stack host) has two addresses; when one refuses the connection and the other fails the pin, OkHttp throws the first error and attaches the others as *suppressed*. The security check now walks suppressed exceptions too. A real-server test hit this, classified as `NoInternetConnectionException` before the fix.
+- **Testing:** on the JVM, a real HTTPS `MockWebServer` with certificates from `okhttp-tls` (test-only, 5.5.0 as Ktor brings): matching root, leaf and backup pins reach it; a wrong pin fails with **zero requests** at the server. On iOS, Gradle's headless simulator test runner can't verify public certificates (every TLS request fails with `-1200`), so the tests check that the preset and the helper install Ktor's pinner; a public-site test runs only where verified TLS works and says when it skips.
+- **Tests of a guarded failure return the call's status**, not `error("unreachable")`: that throw would itself become the `UnexpectedException` the test expects, so the test would pass even if the request got through. A mutation (Darwin's pinner removed) exposed it; the same pattern was fixed in Dart's TLS tests.
 
 :::
 
