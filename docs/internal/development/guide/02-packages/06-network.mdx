@@ -852,6 +852,11 @@ The connection fails during the TLS handshake if the server's chain doesn't lead
 - **`resetAuth` can't stop the refresh** (a Dart `Future` can't be cancelled): it answers the waiters with `Rejected` at once and forgets the refresh; the session epoch keeps its late result from storing anything. On Kotlin, `resetAuth` also cancels the coroutine.
 - **Kotlin's auth decisions carry over**: the token source ends a rejected session only if it's still current, a 401 after sign-out never refreshes, a request's own `Authorization` and a one-shot body are left alone, anonymous paths match exactly. `RefreshResult`'s cases are `RefreshTokens`, `RefreshRejected` and `RefreshUnavailable`, so they don't clash with `RefreshOutcome`'s `Rejected` and `Unavailable`.
 - **`SessionTokenSource(store, call, onSessionEnded: …)`** uses Dart 3's private named parameter (`{this._onSessionEnded}`), so callers still pass `onSessionEnded:`.
+- **`processApiCall` unwraps a `SinewException` the auth interceptor wrapped** before its handlers run, so a refresh's cause passes through as is and isn't reported a second time (`SessionTokenSource` already reported an unexpected one). `apiHandlers` keeps the same row, for apps composing it themselves.
+- **Socket and TLS failures come from a conditional import** (`dart:io` on the VM, a stub on the web): `SocketException` and `HttpException` mean offline, a `TlsException` (handshake, bad record) never does, even inside Dio's `connectionError`. Tested against a real HTTPS server with a throwaway self-signed certificate made by `openssl` at run time, so no key is committed.
+- **Parse failures are matched narrowly**: `TypeError`, `FormatException`, json_serializable's unknown-enum `ArgumentError` by its message (an unrelated `ArgumentError` from a bug stays `UnexpectedException`), and `CheckedFromJsonException` by type name, to avoid depending on `json_annotation`.
+- **A plain `Dio`** (no `SinewErrorBodyInterceptor`) is classified by status and `Retry-After`, with the local message, as Kotlin does with Ktor's `ResponseException`.
+- **`RefreshResult.from(result)`** turns a guarded refresh call into `RefreshRejected` for a refusal and `RefreshUnavailable` otherwise; a `CancelException` keeps the session.
 
 :::
 
