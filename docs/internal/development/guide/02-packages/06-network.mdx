@@ -834,4 +834,13 @@ The connection fails during the TLS handshake if the server's chain doesn't lead
 
 :::
 
+:::tip[Settled during S3 (2026-10-12)]
+
+- **Kotlin S3's decisions carry over** (see the base note): `SinewConfig` fails fast, the default reader's rules, `HttpStatusError` is internal (in `src/`, not exported), `Retry-After` reads seconds or IMF-fixdate only, and the token source ends a rejected session itself.
+- **`ErrorBodyReader.read(int status, Object? body)`**: Dio has usually decoded JSON into a `Map`, so the standard reader takes a `Map` or a JSON `String`. `ErrorBodyReader.standard` is the default; `ErrorBodyReader.from((status, body) => …)` wraps a function.
+- **`Retry-After` seconds are capped at 10 digits.** On the web, Dart integers are doubles, so a huge value wouldn't overflow to `null` as it does on the VM; a mutation run in Chrome showed the difference.
+- **`sinew_network -> sinew_models` is an allowed edge**, as for `sinew_paging` and `sinew_riverpod`: Dart has no transitive re-export like Kotlin's `api()`, and the package uses `SinewException`, `Result` and `Envelope` directly.
+
+:::
+
 </DartOnly>
