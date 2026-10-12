@@ -857,6 +857,8 @@ The connection fails during the TLS handshake if the server's chain doesn't lead
 - **Parse failures are matched narrowly**: `TypeError`, `FormatException`, json_serializable's unknown-enum `ArgumentError` by its message (an unrelated `ArgumentError` from a bug stays `UnexpectedException`), and `CheckedFromJsonException` by type name, to avoid depending on `json_annotation`.
 - **A plain `Dio`** (no `SinewErrorBodyInterceptor`) is classified by status and `Retry-After`, with the local message, as Kotlin does with Ktor's `ResponseException`.
 - **`RefreshResult.from(result)`** turns a guarded refresh call into `RefreshRejected` for a refusal and `RefreshUnavailable` otherwise; a `CancelException` keeps the session.
+- **`pinCertificateAuthorities(dio, authorities)`**, a function rather than an interceptor, since pinning lives on the adapter: it sets the existing `IOHttpClientAdapter`'s `createHttpClient` (keeping the app's adapter) to an `HttpClient` whose `SecurityContext(withTrustedRoots: false)` trusts only the pinned PEMs. An empty list is refused, since it would fail every request. On the web it's a no-op behind a conditional import.
+- **Tested against real HTTPS servers** with two certificate authorities made by `openssl` at run time: the pinned one's server is reached; the other's fails the handshake and **the server receives no request**; a backup authority works. A test against a public site (pub.dev, skipped offline) proves no system root is trusted, the one rule local servers can't show. Apple's trust evaluation, which `dart:io` uses on macOS and iOS, needs the CA marked `CA:TRUE` and the server certificate to carry `extendedKeyUsage=serverAuth`; the test certificates are made with both.
 
 :::
 
