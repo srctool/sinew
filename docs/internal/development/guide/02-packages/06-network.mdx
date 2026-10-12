@@ -313,6 +313,7 @@ It's for the UI (an offline banner, disabling a submit button). It never decides
 - **A 429 asking for longer than `maxDelay` is returned at once**, not waited out, so the page shows "Try again in 120 seconds" instead of a long spinner. Within `maxDelay`, the retry waits at least `retryAfter`.
 - **`poll` uses equal jitter** (half the interval fixed, half random), so the interval still grows by 1.5× while clients spread out; `retryWithBackoff` keeps full jitter. A slow call still running at the timeout is cut, and the `PollingTimeOutException` carries the last retryable failure as its cause.
 - **`NetworkChecker` starts `Online`** until the platform first reports, so an app doesn't flash an offline banner at launch, and it **has a `close()`**: monitoring runs from creation until then, one checker per app. A captive portal counts as offline where the platform can tell (Android's validation).
+- **Auth is opt-out, through `anonymousPaths` only** (decided 2026-10-12). No per-request "anonymous" flag: anonymous endpoints are few (sign-in, register, OTP, password reset, refresh), so listing them once beats tagging every other endpoint, and a new endpoint gets the token unless someone deliberately lists it. Considered against the opt-in, per-endpoint header markers of an earlier in-house Dio package.
 
 :::
 
@@ -840,6 +841,12 @@ The connection fails during the TLS handshake if the server's chain doesn't lead
 - **`ErrorBodyReader.read(int status, Object? body)`**: Dio has usually decoded JSON into a `Map`, so the standard reader takes a `Map` or a JSON `String`. `ErrorBodyReader.standard` is the default; `ErrorBodyReader.from((status, body) => …)` wraps a function.
 - **`Retry-After` seconds are capped at 10 digits.** On the web, Dart integers are doubles, so a huge value wouldn't overflow to `null` as it does on the VM; a mutation run in Chrome showed the difference.
 - **`sinew_network -> sinew_models` is an allowed edge**, as for `sinew_paging` and `sinew_riverpod`: Dart has no transitive re-export like Kotlin's `api()`, and the package uses `SinewException`, `Result` and `Envelope` directly.
+- **Interceptors first, the preset second**, as on Kotlin: `SinewTimeoutInterceptor`, `SinewHeadersInterceptor`, `SinewErrorBodyInterceptor` and `SinewLogInterceptor` are public and installable alone; `SinewHttp.dio(config)` is the optional preset. The auth interceptor (#18) joins them.
+- **No `SinewRedirectInterceptor`.** Tested against real servers: `dart:io` (Dio's default adapter) follows `GET` and `HEAD` only, stops loops, and drops `Authorization` **and** `Cookie` on a hop to another host or port. In the browser, Dio can't turn redirects off, and a Chrome test (servers started with `spawnHybridCode`) confirms the Fetch standard drops `Authorization` across origins. Both platforms already meet the rules, so Sinew adds nothing; the tests catch it if a Dio or SDK change ever alters that.
+- **No `sinewBackend`.** Dio keeps the base URL readable on every request (`options.baseUrl`), so the auth interceptor reads it there; Kotlin needed `sinewBackend` only because Ktor's `defaultRequest` hides it.
+- **The deadline cancels a cancel token of the request's own**, linked to the caller's: a deadline never cancels a token the caller shares with other requests, and the caller cancelling still cancels the request with its own reason. A request sets its own deadline with `Options(extra: {sinewDeadline: …})`.
+- **`SinewHeadersInterceptor` relies on Dio's case-insensitive header map** for "a header the request set wins", on the VM and in the browser.
+- **Testing:** a fake `HttpClientAdapter`; `fake_async` for deadlines that fire, but the real clock for completed requests, since under Chrome Dio decodes with browser APIs a fake clock doesn't drive; real servers on the VM for the trickling response and the redirect rules.
 
 :::
 
