@@ -69,6 +69,7 @@ flowchart BT
     NW[sinew_network] --> EX
     ST[sinew_storage] --> EX
     ST --> SC[sinew_security]
+    SC -.->|Kotlin: PlatformContext| M
     CG[sinew_camouflage] --> PG
     CG --> CAMO["Camouflage core"]
     CG --> L10
@@ -88,7 +89,7 @@ flowchart BT
 |---|---|
 | No cycles. `sinew_models` is the leaf. | Any package can be taken alone, with only what it stands on |
 | `sinew_l10n` is the only package that touches a localization framework | Apps with their own translations of the error keys can skip it |
-| `sinew_presentation` and `sinew_security` depend on no other Sinew package | Presentation is useful in an app that keeps its own data layer. Security is useful anywhere. |
+| `sinew_presentation` depends on no other Sinew package, and `sinew_security` only on `sinew_models`, for Kotlin's `PlatformContext` (ADR-24) | Presentation is useful in an app that keeps its own data layer. Security is useful anywhere, and its factories wire like every other Sinew factory. |
 | Only `sinew_camouflage` knows Camouflage, and Camouflage never knows Sinew | Either library can be used without the other |
 | `sinew_testing` is a test-only dependency | Fakes never reach production code |
 | Network and storage expose hook points (`SinewHttpHooks`, `InspectableStore`) that do nothing until devtools pass real hooks. `sinew_devtools` depends on network and storage to provide those hooks; network and storage never depend on devtools. | Production code paths don't change when devtools are absent, and devtools are an opt-in dependency |
@@ -226,7 +227,7 @@ A Sinew type an app sees in a public signature is an `api` dependency, so it arr
 | `sinew-viewmodel` | `sinew-presentation`, `sinew-models`, `lifecycle-viewmodel` | `lifecycle-runtime-compose` |
 | `sinew-network` | `sinew-exception`, **`ktor-client-core`** (exposed on purpose: apps write API clients on it) | engines, content-negotiation, serialization |
 | `sinew-storage` | `sinew-exception`, `sinew-security` | DataStore |
-| `sinew-security` | | Tink, cryptography-kotlin, Biometric |
+| `sinew-security` | `sinew-models` (`PlatformContext` only, ADR-24) | Tink, cryptography-kotlin, Biometric |
 | `sinew-camouflage` | `sinew-paging`, `camouflage-core` | |
 
 An app's data module that returns `PagingDomain` or fails with an `SinewException` declares `sinew-paging` or `sinew-exception` as `api` too, so its own consumers get them.

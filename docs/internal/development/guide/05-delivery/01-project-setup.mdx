@@ -29,6 +29,7 @@ flowchart BT
     NW[":sinew-network"] --> EX
     ST[":sinew-storage"] --> EX
     ST --> SC[":sinew-security"]
+    SC --> M
     VM[":sinew-viewmodel"] --> PR[":sinew-presentation"]
     VM --> M
     VM --> EX
@@ -67,7 +68,7 @@ flowchart BT
 | `:sinew-presentation` | coroutines | none |
 | `:sinew-viewmodel` | `api(:sinew-presentation)`, `api(:sinew-models)`, `:sinew-exception`, lifecycle-viewmodel, lifecycle-runtime-compose, Compose runtime | none |
 | `:sinew-network` | `api(:sinew-exception)`, `api(ktor-client-core)`, ktor content-negotiation, kotlinx-serialization-json, kotlinx-datetime | `androidMain` + `jvmMain` OkHttp engine, `iosMain` Darwin engine, `wasmJsMain` Js engine; network checker per platform |
-| `:sinew-security` | coroutines | `androidMain` Tink + Keystore + Biometric; `iosMain` Keychain + platform AES-GCM; `jvmMain` Tink; `wasmJsMain` Web Crypto |
+| `:sinew-security` | `api(:sinew-models)` (`PlatformContext`), coroutines | `tinkMain` (shared by `androidMain` and `jvmMain`, compiled against Tink's JVM artifact) the Tink cipher; `androidMain` tink-android + Keystore + Biometric; `jvmMain` tink; `iosMain` Keychain + cryptography-kotlin (CryptoKit); `wasmJsMain` Web Crypto through JS interop |
 | `:sinew-storage` | `api(:sinew-exception)`, `api(:sinew-security)`, DataStore (non-web targets) | `androidMain`, `iosMain`, `jvmMain` DataStore; `wasmJsMain` browser storage |
 | `:sinew-testing` | `api` of every package it fakes, ktor-client-mock, Turbine | none |
 | `:sinew-camouflage` | `api(:sinew-paging)`, `:sinew-exception`, `:sinew-l10n`, `api(camouflage-core)` | none |
@@ -172,7 +173,7 @@ sinew-camouflage -> sinew-paging
 | Case | Decided behavior |
 |---|---|
 | DataStore has no wasmJs target | `:sinew-storage` uses browser storage in `wasmJsMain` for `KeyValueStore`, and DataStore everywhere else. The Storage note documents the weaker guarantees on web. |
-| Tink has no iOS or wasm target | `:sinew-security` uses Tink only in `androidMain` and `jvmMain`. iOS and web use the platform's AES-GCM (see Security). |
+| Tink has no iOS or wasm target | `:sinew-security` uses Tink only on Android and the JVM, through a `tinkMain` group added to the default hierarchy template (adding `dependsOn` by hand would switch the template off and drop `iosMain`). `tinkMain` compiles against `tink` as `compileOnly`; Android ships `tink-android`, the JVM `tink`. iOS and web use the platform's AES-GCM (see Security). |
 | A module that needs Compose only for one function (`ObserveEffects`) | It applies `com.srctool.compose` anyway. Settled in base review: no separate module for it. |
 | AGP's KMP library target changed its DSL name between versions (`androidLibrary`, then `android`) | The convention plugin looks up whichever exists, so an AGP upgrade doesn't break every module. It also calls `withHostTest {}`, so `commonTest` runs as Android host tests. |
 | Flavor + build-type configurations (`productionReleaseImplementation`) don't exist until AGP creates the variants | The sample's Android app creates the ones it uses with `configurations.maybeCreate`, so per-variant devtools dependencies resolve. |

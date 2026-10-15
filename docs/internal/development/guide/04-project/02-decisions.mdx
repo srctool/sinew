@@ -133,3 +133,8 @@ A short log of the decisions that shape Sinew. An ADR is never edited after it's
 - **Context:** on iOS, the biometric vault's Keychain item survived a reinstall. Separately, "Sinew never chooses a nonce" couldn't hold where a crypto library takes the nonce as input.
 - **Decision:** `BiometricVault.create(clearOnReinstall = true)` deletes its item on the first use after an install. Every nonce is 96 bits from a secure random source, fresh per value, never a counter or a constant. Amends ADR-14.
 - **Consequences:** a reinstalled app never unlocks a previous install's session.
+
+### ADR-24 Security depends on models, for the platform context
+- **Context:** on Kotlin, `FieldCipher.create` and `BiometricVault.create` need the Android `Context`. Every other Sinew factory takes `PlatformContext` from `sinew-models`, so the same wiring line compiles in `commonMain`; security depended on no Sinew package.
+- **Decision:** `sinew-security` depends on `sinew-models` and takes `PlatformContext`. It uses nothing else from it: `DecryptionFailed` stays a plain error and `BiometricUnlock` its own type, mapped by the storage guard. Security stays a separate package from storage: the app's own database is `FieldCipher`'s main user, and `BiometricVault` isn't storage. Decided 2026-10-15. Amends the Architecture rule that security depends on nothing.
+- **Consequences:** an app using security alone also gets `sinew-models` (and `kotlinx-serialization-core`). Dart's `sinew_security` is unchanged: its factories take no context.
