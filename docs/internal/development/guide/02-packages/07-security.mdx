@@ -17,7 +17,7 @@ Apps need two cryptographic things again and again:
 
 Both are easy to get subtly wrong. Hand-rolled AES with a fixed IV, a key stored next to the data, or a biometric prompt that's just a yes/no gate in front of a normal read are all common mistakes.
 
-`sinew_security` provides both behind two small interfaces, `FieldCipher` and `BiometricVault`. It's built only on **vetted cryptography libraries and the platform's key storage**, and Sinew writes no cryptographic primitive itself. It depends on no other Sinew package, so it's usable anywhere.
+`sinew_security` provides both behind two small interfaces, `FieldCipher` and `BiometricVault`. It's built only on **vetted cryptography libraries and the platform's key storage**, and Sinew writes no cryptographic primitive itself. It depends on no other Sinew package except, on Kotlin, `sinew-models` for `PlatformContext` (ADR-24), so it's usable anywhere.
 
 ### 2. Shape
 
@@ -34,6 +34,7 @@ Both are easy to get subtly wrong. Hand-rolled AES with a fixed IV, a key stored
 interface FieldCipher {
     encrypt(plain: String, context: String = ""): String     // returns base64 ciphertext
     decrypt(cipher: String, context: String = ""): String    // throws DecryptionFailed if it can't
+    rotateKey()                                               // a new current key; old values still decrypt
 }
 ```
 
@@ -88,7 +89,7 @@ Which fields are personal, when biometrics are offered, how long a session lives
 
 | Name | Signature (pseudocode) | For |
 |---|---|---|
-| `FieldCipher` | `encrypt(plain, context = ""): String`, `decrypt(cipher, context = ""): String` | field-level encryption |
+| `FieldCipher` | `encrypt(plain, context = ""): String`, `decrypt(cipher, context = ""): String`, `rotateKey()` | field-level encryption; the app decides when to rotate (a schedule, a security event) |
 | `FieldCipher.create` | `FieldCipher.create(keyAlias = "sinew.field", …platform options)` | the platform implementation, creating its data key on first use |
 | `DecryptionFailed` | a plain error (not an `SinewException`) | thrown by `decrypt`; the storage guard maps it |
 | `BiometricVault` | `availability()`, `store(secret)`, `unlock(reason): BiometricUnlock`, `disable()` | a biometric-protected secret |
@@ -157,9 +158,9 @@ The base note settles "vetted libraries and platform crypto behind one interface
 | Android | **Tink** `Aead` (`AES256_GCM`) | a Tink keyset, encrypted by an **Android Keystore** master key (StrongBox when available), stored by `AndroidKeysetManager` | Keystore key requiring `BIOMETRIC_STRONG`, `BiometricPrompt` + `CryptoObject` |
 | iOS | **cryptography-kotlin, CryptoKit provider** (`AES.GCM`) | a 256-bit key in the **Keychain**, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | Keychain item with `SecAccessControl` `.biometryCurrentSet` |
 | JVM desktop | **Tink** `Aead` | a Tink keyset in the user's app-data folder, file permissions owner-only | `Unavailable` |
-| wasmJs | **cryptography-kotlin, WebCrypto provider** (`AES-GCM`) | a non-extractable `CryptoKey` in IndexedDB | `Unavailable` |
+| wasmJs | **Web Crypto** (`AES-GCM`), called directly through JS interop | a non-extractable `CryptoKey` in IndexedDB | `Unavailable` |
 
-Every target produces the same ciphertext layout, so the format is documented once: `base64( version(1) | keyId(4) | nonce(12) | ciphertext | tag(16) )`. Tink's own output prefix already carries a key id. The iOS and web implementations write the same 5-byte header themselves, so a value's key is known before decrypting.
+Every target produces the same ciphertext layout, so the format is documented once: `base64( version(1) | keyId(4) | nonce(12) | ciphertext | tag(16) )`. It's exactly Tink's output with its `TINK` prefix (`0x01` and a big-endian key id). The iOS and web implementations write the same 5-byte header themselves, over a small keyring (`primary id`, `id → key`), so a value's key is known before decrypting.
 
 #### `FieldCipher` {#kotlin-fieldcipher}
 
@@ -167,8 +168,10 @@ Every target produces the same ciphertext layout, so the format is documented on
 public interface FieldCipher {
     public suspend fun encrypt(plain: String, context: String = ""): String
     public suspend fun decrypt(cipher: String, context: String = ""): String     // throws DecryptionFailed
+    public suspend fun rotateKey()                                               // a new current key; old values still decrypt
     public companion object { public fun create(platform: PlatformContext, keyAlias: String = "sinew.field"): FieldCipher }
 }
+public fun FieldCipher.Companion.create(directory: Path, keyAlias: String = "sinew.field"): FieldCipher   // jvmMain
 public class DecryptionFailed(cause: Throwable? = null) : IllegalStateException("Value could not be decrypted", cause)
 ```
 
@@ -239,7 +242,7 @@ The secret is a Keychain generic-password item created with `SecAccessControlCre
 
 | Case | Decided behavior |
 |---|---|
-| The Keystore master key is lost (a restore to a new device) | Loading the keyset throws. `create` catches that, deletes the unreadable keyset and starts a fresh one; every old value then throws `DecryptionFailed` (absent). Verify at S4 how `AndroidKeysetManager` reports the failure. |
+| The Keystore master key is lost (a restore to a new device) | `AndroidKeysetManager.build()` throws a `GeneralSecurityException` (an `IOException` for a keyset it can't parse). The cipher deletes the keyset and the Keystore entry, makes a fresh pair, and every old value throws `DecryptionFailed` (absent). Verified on an emulator by deleting the Keystore entry. |
 | StrongBox isn't available | The master key falls back to the regular Keystore. Tink handles the choice. |
 | The app's activity isn't a `FragmentActivity` | `unlock` returns `Failed(Unavailable)` and logs a developer warning. |
 | JVM desktop key file copied to another machine | The values decrypt there: the desktop level only protects against casual reading, as the base note states. |
@@ -247,7 +250,7 @@ The secret is a Keychain generic-password item created with `SecAccessControlCre
 :::info[Decided by default (revisit during implementation)]
 
 - **cryptography-kotlin** (CryptoKit provider on iOS, WebCrypto on wasm) for AES-GCM where Tink doesn't exist. This is the base note's "one multiplatform crypto library" evaluation: it covers iOS and web, but not Android Keystore integration, so Android and JVM keep Tink.
-- **Web keys:** the data key is a non-extractable Web Crypto key persisted in IndexedDB. Verify at S4 that cryptography-kotlin can create and reuse such a key; if not, `wasmJsMain` calls Web Crypto through JS interop directly.
+- **Web keys:** the data key is a non-extractable Web Crypto key persisted in IndexedDB. Checked at S4: cryptography-kotlin 0.6.0's WebCrypto provider always generates and imports keys as extractable and keeps its `CryptoKey` private, so `wasmJsMain` calls Web Crypto through JS interop directly.
 - **One documented ciphertext layout** across targets, so data written on one platform's implementation is readable by another's in tests.
 - **A desktop key file with owner-only permissions**, the weaker documented level, instead of depending on an OS-keychain library.
 
