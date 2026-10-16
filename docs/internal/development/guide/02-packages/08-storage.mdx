@@ -207,7 +207,7 @@ public interface SecureStore : InspectableStore {
 }
 ```
 
-**The reinstall rule.** On iOS, `SecureStore.create` and `BiometricVault.create` both check a marker (`sinew.secure.installed`) in a DataStore file, which is deleted with the app. With no marker, each deletes its own Keychain items (the store's `service`, the vault's item), then writes the marker. On the other targets the rule does nothing, because their storage goes with the app.
+**The reinstall rule.** On iOS, `SecureStore` and `BiometricVault` each check their own marker file in Application Support (`sinew/installed/<owner>`, from `sinew-security`'s `InstallMarker`), which is deleted with the app. With no marker, each deletes its own Keychain items (the store's `service`, the vault's item), then writes its marker. One marker per owner, so the first owner to claim it never hides a reinstall from another. On the other targets the rule does nothing, because their storage goes with the app.
 
 **Concurrent writes.** Each `SecureStore` serializes its writes with a `Mutex`. DataStore already serializes its own.
 

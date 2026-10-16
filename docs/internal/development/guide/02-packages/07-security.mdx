@@ -54,7 +54,8 @@ interface FieldCipher {
 ```
 interface BiometricVault {
     availability(): BiometricAvailability          // Available | NotEnrolled | Unavailable
-    store(secret: String)                          // after a real sign-in, when the user opts in
+    isStored(): Boolean                            // without a prompt: whether to offer biometric sign-in
+    store(secret, reason): BiometricStore          // after a real sign-in, when the user opts in; Stored | Failed(reason)
     unlock(reason: String): BiometricUnlock        // Unlocked(secret) only after a real biometric match, else Failed(reason)
     disable()                                      // deletes the protected secret
 }
@@ -92,7 +93,8 @@ Which fields are personal, when biometrics are offered, how long a session lives
 | `FieldCipher` | `encrypt(plain, context = ""): String`, `decrypt(cipher, context = ""): String`, `rotateKey()` | field-level encryption; the app decides when to rotate (a schedule, a security event) |
 | `FieldCipher.create` | `FieldCipher.create(keyAlias = "sinew.field", …platform options)` | the platform implementation, creating its data key on first use |
 | `DecryptionFailed` | a plain error (not an `SinewException`) | thrown by `decrypt`; the storage guard maps it |
-| `BiometricVault` | `availability()`, `store(secret)`, `unlock(reason): BiometricUnlock`, `disable()` | a biometric-protected secret |
+| `BiometricVault` | `availability()`, `isStored()`, `store(secret, reason): BiometricStore`, `unlock(reason): BiometricUnlock`, `disable()` | a biometric-protected secret; `store` prompts where the key needs a match to encrypt (Android), not on iOS (ADR-25) |
+| `BiometricStore` | `Stored \| Failed(reason: BiometricFailure)` | the outcome of `store` |
 | `BiometricUnlock` | `Unlocked(secret) \| Failed(reason: BiometricFailure)` | the outcome of `unlock` |
 | `BiometricVault.create` | `BiometricVault.create(keyAlias = "sinew.biometric", clearOnReinstall = true, …platform options)` | the platform implementation. Like `SecureStore`, it deletes its item on the first use after an install, so a reinstalled app never unlocks the previous install's session. |
 | `BiometricAvailability` | `Available \| NotEnrolled \| Unavailable` | whether to offer biometrics |
@@ -188,7 +190,7 @@ KeyGenParameterSpec.Builder(alias, PURPOSE_ENCRYPT or PURPOSE_DECRYPT)
     .setInvalidatedByBiometricEnrollment(true)
 ```
 
-`store(secret)` encrypts with a `Cipher` unlocked by `BiometricPrompt(CryptoObject(cipher))`, then saves the IV and ciphertext in DataStore. `unlock(reason)` decrypts the same way. The prompt needs a `FragmentActivity`. `BiometricVault.create` registers an activity-lifecycle callback on the `Application`, so it always knows the current one.
+`store(secret)` encrypts with a `Cipher` unlocked by `BiometricPrompt(CryptoObject(cipher))`, then saves the IV and ciphertext in shared preferences (`sinew.security.biometric`); a secret this small needs nothing more, and security takes no DataStore dependency. `unlock(reason)` decrypts the same way. The prompt needs a `FragmentActivity`. `BiometricVault.create` registers an activity-lifecycle callback on the `Application`, so it always knows the current one.
 
 | Android error | `BiometricFailure` |
 |---|---|
@@ -213,7 +215,7 @@ The secret is a Keychain generic-password item created with `SecAccessControlCre
 | Name | Kotlin |
 |---|---|
 | `FieldCipher` | as above |
-| `BiometricVault` | `public interface BiometricVault { public suspend fun availability(): BiometricAvailability; public suspend fun store(secret: String); public suspend fun unlock(reason: String): BiometricUnlock; public suspend fun disable() }`, `create(platform, keyAlias = "sinew.biometric", clearOnReinstall = true)` |
+| `BiometricVault` | `public interface BiometricVault { public suspend fun availability(): BiometricAvailability; public suspend fun isStored(): Boolean; public suspend fun store(secret: String, reason: String): BiometricStore; public suspend fun unlock(reason: String): BiometricUnlock; public suspend fun disable() }`, `create(platform, keyAlias = "sinew.biometric", clearOnReinstall = true)` |
 | `BiometricUnlock` | `public sealed interface { Unlocked(secret: String), Failed(reason: BiometricFailure) }` |
 | `BiometricAvailability`, `BiometricFailure` | `public enum class` |
 
@@ -231,7 +233,7 @@ The secret is a Keychain generic-password item created with `SecAccessControlCre
 
 #### Platform setup (the app's part) {#kotlin-platform-setup-the-apps-part}
 
-- **Android:** `androidx.biometric` needs a `FragmentActivity` (or `AppCompatActivity`) as the host. Exclude the Tink keyset preferences and the vault's DataStore file from cloud backup and device transfer in `data_extraction_rules.xml`.
+- **Android:** `androidx.biometric` needs a `FragmentActivity` (or `AppCompatActivity`) as the host. Exclude the Tink keyset preferences (`sinew.security.keysets`) and the vault's preferences (`sinew.security.biometric`) from cloud backup and device transfer in `data_extraction_rules.xml`.
 - **iOS:** `NSFaceIDUsageDescription` in `Info.plist`.
 
 **Done when**
