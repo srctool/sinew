@@ -182,9 +182,9 @@ The base note defines the stores, the guard and the paging helper. On Kotlin, ea
 | Target | `KeyValueStore` | `SecureStore` |
 |---|---|---|
 | Android | DataStore Preferences (`sinew_prefs.preferences_pb`) | DataStore Preferences (`sinew_secure.preferences_pb`), every value encrypted with Tink AEAD, the key name as associated data |
-| iOS | DataStore Preferences in the app's documents folder | **Keychain** generic-password items, `service = namespace`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` |
-| JVM | DataStore Preferences in the user's app-data folder | DataStore + Tink, as on Android, with the desktop key file |
-| wasmJs | `localStorage`, keys prefixed with the store's name | `localStorage` with values encrypted by `FieldCipher` (WebCrypto) |
+| iOS | DataStore Preferences in Application Support (`sinew/<name>.preferences_pb`; Documents is shown in the Files app) | **Keychain** generic-password items, `service = namespace`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` |
+| JVM | DataStore Preferences in the user's app-data folder (`sinew/<name>.preferences_pb`, or `create(directory, name)`) | DataStore + Tink, as on Android, with the desktop key file |
+| wasmJs | `localStorage`, keys prefixed with the store's name, values tagged with their type (`s:`, `i:`, `b:`, `d:`) | `localStorage` with values encrypted by `FieldCipher` (WebCrypto) |
 
 ```kotlin
 public interface KeyValueStore : InspectableStore {
