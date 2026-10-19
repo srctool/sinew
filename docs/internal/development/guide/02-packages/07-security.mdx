@@ -277,6 +277,7 @@ abstract interface class FieldCipher {
   static Future<FieldCipher> create({String keyAlias = 'sinew.field', FlutterSecureStorage? keyStorage});
   Future<String> encrypt(String plain, {String context = ''});
   Future<String> decrypt(String cipher, {String context = ''});      // throws DecryptionFailed
+  Future<void> rotateKey();                                          // a new current key; old values still decrypt
 }
 ```
 
@@ -285,7 +286,7 @@ abstract interface class FieldCipher {
 | Algorithm | `AesGcmSecretKey` from `webcrypto`, 256-bit, a fresh 12-byte nonce from `fillRandomBytes` (a cryptographically secure source) per value, never reused, `context` as additional data |
 | Data key | generated once, stored base64 in `flutter_secure_storage` under `keyAlias`, written with this-device-only options (iOS and macOS `KeychainAccessibility.first_unlock_this_device`), so it never travels in a backup (Keychain this-device-only on iOS and macOS, Keystore-protected on Android, libsecret on Linux, Windows Credential Manager on Windows, Web Crypto-wrapped `localStorage` on web) |
 | Format | the same layout as Kotlin: `base64(version | keyId | nonce | ciphertext | tag)`, so the shared cross-platform fixture decrypts on both |
-| Rotation | a new key gets a new 4-byte id. Old keys stay in secure storage under `keyAlias.<id>`, until no value uses them. |
+| Rotation | `rotateKey()`: a new key with a new random 4-byte id becomes the current one. The whole keyring (`primary id | (key id | key)*`, Kotlin's iOS layout) is one secure-storage entry under `keyAlias`, so a rotation is a single write. |
 
 #### `BiometricVault` {#dart-biometricvault}
 
