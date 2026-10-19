@@ -18,7 +18,7 @@ Sinew's tests run in `commonTest` wherever possible, and on each platform where 
 | Job | Runner | Runs |
 |---|---|---|
 | `jvm-android` | ubuntu | `./gradlew check` for android (host tests) and jvm: unit tests, `checkKotlinAbi`, `checkSinewGraph`, Detekt, Kover (80% floor) |
-| `android-device` | ubuntu + emulator (Gradle Managed Devices) | instrumented tests: Keystore, Tink keyset loss, biometrics with an emulator fingerprint, the network checker |
+| `android-device` | ubuntu + emulator (`android-emulator-runner`, API 35 `google_apis`, KVM) | instrumented tests: `FieldCipher` on the Keystore and a lost master key, `SecureStore` and Android's SQLite errors, the network checker switching Wi-Fi and data. The biometric tests skip themselves there and run through `tool/android-biometric-test.sh` |
 | `ios` | macos | `./gradlew iosSimulatorArm64Test`, plus the Keychain, CryptoKit and biometric tests on a simulator, plus (from S5) an `xcodebuild` of the iOS sample |
 | `web` | ubuntu | `./gradlew wasmJsBrowserTest` in headless Chrome |
 | `devtools-gating` | ubuntu + macos | builds the production variants and fails if any non-no-op `com.srctool.sinew.devtools` class is present, and checks that the merged real ABI dumps equal the no-op dump (APK via `apkanalyzer`, the iOS framework via `nm`, desktop and web bundles by class and symbol listing) |
