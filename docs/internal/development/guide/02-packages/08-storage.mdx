@@ -338,7 +338,7 @@ Future<PagingEntity<OrderRow>> page(int page, int limit) => pagedQuery(page, lim
 
 | Name | Dart |
 |---|---|
-| `KeyValueStore` | `abstract interface class KeyValueStore implements InspectableStore` with `getString/getInt/getBool/getDouble`, setters, `remove`, `clear`, `static Future<KeyValueStore> create({String name = 'sinew_prefs'})` |
+| `KeyValueStore` | `abstract interface class KeyValueStore implements InspectableStore` with `getString/getInt/getBool/getDouble`, setters, `remove`, `clear`, `static KeyValueStore create({String name = 'sinew_prefs'})` |
 | `SecureStore` | as above |
 | `StorageAccess` | `enum StorageAccess { read, write }` |
 | `processStorageCall` | as above |
@@ -347,7 +347,7 @@ Future<PagingEntity<OrderRow>> page(int page, int limit) => pagedQuery(page, lim
 
 ### 4. Build steps {#dart-4-build-steps}
 
-1. `KeyValueStore`, with `SharedPreferences.setMockInitialValues` in unit tests and an integration test per platform.
+1. `KeyValueStore`, with `SharedPreferencesAsync`'s in-memory platform in unit tests and an integration test per platform.
 2. `SecureStore`, unit-tested with `FlutterSecureStorage.setMockInitialValues`. Then integration tests:
    - the reinstall rule on the iOS simulator;
    - an undecryptable value reads as absent on Android.
