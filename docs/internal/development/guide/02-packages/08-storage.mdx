@@ -221,8 +221,8 @@ public suspend fun <T> processStorageCall(module: String, function: String, acce
 | Matches | Produces |
 |---|---|
 | `DecryptionFailed`, DataStore's `CorruptionException`, `SerializationException` on stored data | `LocalStorageCorruptionException` |
-| Android/JVM `IOException` with `ENOSPC`, `SQLiteFullException`; iOS `NSError` `NSFileWriteOutOfSpaceError` (Cocoa 640) or `SQLITE_FULL` (13); web `QuotaExceededError` | `StorageFullException` |
-| any other `IOException` or storage error on `Read` / `Write` | `StorageReadException` / `StorageWriteException` |
+| any error in the chain whose message says the device is out of space ("No space left on device", `ENOSPC`, SQLite's "database or disk is full" / `SQLITE_FULL`), Android's `SQLiteFullException`, the browser's `QuotaExceededError` | `StorageFullException` |
+| any other storage error on `Read` / `Write`: `IOException` (okio's on iOS), Android's `SQLiteException`, the JVM's `SQLException`, a browser `DOMException` from storage (`SecurityError`, `InvalidStateError`…), never a plain JS `Error` | `StorageReadException` / `StorageWriteException` |
 | `EnvelopeDataMissing` | `ParseException` |
 
 #### Paging a Room query {#kotlin-paging-a-room-query}
