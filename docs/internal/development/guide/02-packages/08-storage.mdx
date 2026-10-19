@@ -52,7 +52,7 @@ class OrderPreferences(store: KeyValueStore) {
 
 #### The reinstall rule
 
-On iOS, Keychain items **survive an uninstall**, and preferences don't. Without care, a reinstalled app silently restores the previous user's refresh token. `SecureStore` handles it: on the first use after an install (detected by a marker in `KeyValueStore`, which an uninstall deletes), it clears every item it owns. On Android, secure storage is deleted with the app, so the rule is a no-op there.
+On iOS, Keychain items **survive an uninstall**, and preferences don't. Without care, a reinstalled app silently restores the previous user's refresh token. `SecureStore` handles it in one of two ways. On Kotlin, it keeps no secret in the Keychain: secrets are encrypted in the app's own files, which an uninstall deletes, and only the cipher's key is a Keychain item (ADR-26). On Flutter, where secrets are Keychain items, the first use after an install (detected by a marker that an uninstall deletes) clears every item the store owns. On Android, secure storage is deleted with the app either way.
 
 The biometric vault's item is a Keychain item too, outside `SecureStore`'s namespace. `BiometricVault.create(clearOnReinstall = true)` applies the same marker rule to it (see Security).
 
@@ -119,7 +119,7 @@ The devtools browse local data through it. `KeyValueStore` and `SecureStore` imp
 | Name | Signature (pseudocode) | For |
 |---|---|---|
 | `SecureStore` | `read(key): String?`, `write(key, value)`, `delete(key)`, `clearUserData()` | small secrets |
-| `SecureStore.create` | `SecureStore.create(namespace = "sinew", clearOnReinstall = true, …platform options)` | the platform implementation |
+| `SecureStore.create` | `SecureStore.create(namespace = "sinew", …platform options)`; Flutter adds `clearOnReinstall = true` for its Keychain items | the platform implementation |
 | `KeyValueStore` | `getString/getInt/getBool/getDouble(key)`, `setString/…(key, value)`, `remove(key)`, `clear()` | non-sensitive preferences |
 | `KeyValueStore.create` | `KeyValueStore.create(name = "sinew_prefs")` | the platform implementation |
 | `processStorageCall` | `processStorageCall(module, function, access, block): Result<T>`, the same name on both platforms | the source guard for storage |
@@ -134,7 +134,7 @@ The devtools browse local data through it. `KeyValueStore` and `SecureStore` imp
    - a round trip;
    - `clearUserData`;
    - a value that can't be decrypted reads as absent, not a crash;
-   - the reinstall rule (iOS simulator: remove the marker, the next read finds nothing).
+   - the reinstall rule (iOS simulator: on Kotlin, the secrets are in the app's own file and not plain; on Flutter, remove the marker and the next read finds nothing).
 3. The storage guard, with one test per handler row, including a simulated disk-full error on each platform and `DecryptionFailed`.
 4. `pagedQuery` against an in-memory database. Tests:
    - first page;
@@ -181,10 +181,10 @@ The base note defines the stores, the guard and the paging helper. On Kotlin, ea
 
 | Target | `KeyValueStore` | `SecureStore` |
 |---|---|---|
-| Android | DataStore Preferences (`sinew_prefs.preferences_pb`) | DataStore Preferences (`sinew_secure.preferences_pb`), every value encrypted with Tink AEAD, the key name as associated data |
-| iOS | DataStore Preferences in Application Support (`sinew/<name>.preferences_pb`; Documents is shown in the Files app) | **Keychain** generic-password items, `service = namespace`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` |
-| JVM | DataStore Preferences in the user's app-data folder (`sinew/<name>.preferences_pb`, or `create(directory, name)`) | DataStore + Tink, as on Android, with the desktop key file |
-| wasmJs | `localStorage`, keys prefixed with the store's name, values tagged with their type (`s:`, `i:`, `b:`, `d:`) | `localStorage` with values encrypted by `FieldCipher` (WebCrypto) |
+| Android | DataStore Preferences (`sinew_prefs.preferences_pb`) | the `<namespace>_secure` `KeyValueStore`, every value encrypted by `FieldCipher` (`sinew.secure.<namespace>`: Tink, Keystore master key), `<namespace>:<key>` as associated data (ADR-26) |
+| iOS | DataStore Preferences in Application Support (`sinew/<name>.preferences_pb`; Documents is shown in the Files app) | the same, with `FieldCipher`'s key in the Keychain, this-device-only; the secrets are in the app's own file |
+| JVM | DataStore Preferences in the user's app-data folder (`sinew/<name>.preferences_pb`, or `create(directory, name)`) | the same, with the desktop key file (or `create(directory, namespace)`) |
+| wasmJs | `localStorage`, keys prefixed with the store's name, values tagged with their type (`s:`, `i:`, `b:`, `d:`) | the same, with `FieldCipher`'s non-extractable Web Crypto key |
 
 ```kotlin
 public interface KeyValueStore : InspectableStore {
@@ -202,12 +202,12 @@ public interface SecureStore : InspectableStore {
     public suspend fun delete(key: String)
     public suspend fun clearUserData()
     public companion object {
-        public fun create(platform: PlatformContext, namespace: String = "sinew", clearOnReinstall: Boolean = true): SecureStore
+        public fun create(platform: PlatformContext, namespace: String = "sinew"): SecureStore
     }
 }
 ```
 
-**The reinstall rule.** On iOS, `SecureStore` and `BiometricVault` each check their own marker file in Application Support (`sinew/installed/<owner>`, from `sinew-security`'s `InstallMarker`), which is deleted with the app. With no marker, each deletes its own Keychain items (the store's `service`, the vault's item), then writes its marker. One marker per owner, so the first owner to claim it never hides a reinstall from another. On the other targets the rule does nothing, because their storage goes with the app.
+**The reinstall rule.** `SecureStore` keeps no secret in the Keychain: its values are in the app's own file, which an uninstall deletes, so a reinstall starts empty on every target, with no marker (ADR-26). `BiometricVault`'s item is a Keychain item, so it checks its own marker file in Application Support (`sinew/installed/<owner>`, `sinew-security`'s `InstallMarker`) and deletes the item on the first use after an install.
 
 **Concurrent writes.** Each `SecureStore` serializes its writes with a `Mutex`. DataStore already serializes its own.
 
@@ -255,14 +255,14 @@ suspend fun page(page: Int, limit: Int): PagingEntity<OrderEntity> = pagedQuery(
 1. `KeyValueStore` on DataStore (android, ios, jvm) and `localStorage` (wasm), with one shared `commonTest` suite run on every target.
 2. `SecureStore` per target, with the shared suite plus platform tests:
    - Android: a value written, then the Tink keyset deleted, reads as absent.
-   - iOS: the reinstall rule (delete the marker file, recreate the store, find no items).
+   - iOS, run as an app (`tool/ios-app-test.sh`): a round trip through the Keychain-held key, and the secrets in the app's own file, not plain.
 3. `processStorageCall` with one test per handler row. The disk-full rows use fakes that throw each platform's error.
 4. `pagedQuery` against an in-memory Room database on Android/JVM, and a list-backed fetch in `commonTest`.
 
 #### Platform setup (the app's part) {#kotlin-platform-setup-the-apps-part}
 
 - **Android:** exclude `datastore/sinew_secure.preferences_pb` and the Tink keyset preferences from backup and device transfer.
-- **iOS:** to share secrets with an app extension, set a Keychain access group (an option on `create`). The default is no sharing.
+- **iOS:** secrets aren't shared with app extensions: the store's file is in the app's own container.
 
 **Done when**
 - [ ] The shared store suites pass on all four targets.
