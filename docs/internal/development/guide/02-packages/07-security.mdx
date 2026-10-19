@@ -292,10 +292,11 @@ abstract interface class FieldCipher {
 
 ```dart
 abstract interface class BiometricVault {
-  static BiometricVault create({String keyAlias = 'sinew.biometric', bool clearOnReinstall = true});   // the same reinstall marker as SecureStore
+  static BiometricVault create({String keyAlias = 'sinew.biometric', bool clearOnReinstall = true});   // iOS: its own reinstall marker
   Future<BiometricAvailability> availability();
-  Future<void> store(String secret);
-  Future<BiometricUnlock> unlock(String reason);
+  Future<bool> isStored();                                                  // no prompt (ADR-25)
+  Future<BiometricStore> store(String secret, {required String reason});   // prompts on Android (ADR-25)
+  Future<BiometricUnlock> unlock({required String reason});
   Future<void> disable();
 }
 ```
@@ -312,7 +313,7 @@ Desktop and web return `Unavailable`.
 |---|---|
 | `FieldCipher`, `DecryptionFailed` | as above; `class DecryptionFailed implements Exception` |
 | `BiometricVault` | as above |
-| `BiometricUnlock` | `sealed class` with `Unlocked(String secret)`, `BiometricFailed(BiometricFailure reason)` |
+| `BiometricStore`, `BiometricUnlock` | `sealed class`es: `Stored()` or `BiometricFailed(BiometricFailure reason)`, and `Unlocked(String secret)` or the same `BiometricFailed`, which implements both |
 | `BiometricAvailability`, `BiometricFailure` | `enum` |
 
 ### 4. Build steps {#dart-4-build-steps}
@@ -327,7 +328,7 @@ Desktop and web return `Unavailable`.
 
 #### Platform setup (the app's part) {#dart-platform-setup-the-apps-part}
 
-- **Android:** `MainActivity` extends `FlutterFragmentActivity` (`BiometricPrompt` needs a `FragmentActivity`). Exclude the secure storage files from backup.
+- **Android:** `MainActivity` extends `FlutterFragmentActivity` (`BiometricPrompt` needs a `FragmentActivity`). Exclude the secure storage files and the vault's preferences (`sinew.security.biometric`) from backup.
 - **iOS:** `NSFaceIDUsageDescription` in `Info.plist`.
 - **macOS:** the Keychain Sharing entitlement, so `flutter_secure_storage` can write to the Keychain.
 
@@ -339,7 +340,7 @@ Desktop and web return `Unavailable`.
 
 | Case | Decided behavior |
 |---|---|
-| `MainActivity` isn't a `FlutterFragmentActivity` | `unlock` returns `BiometricFailed(unavailable)`, and a developer error is logged with the fix. |
+| `MainActivity` isn't a `FlutterFragmentActivity` | `store` and `unlock` return `BiometricFailed(unavailable)`, and a developer warning is logged with the fix. |
 | The data key is lost (restore to a new device) | A new key is generated. Old values throw `DecryptionFailed` and read as absent. |
 | Linux without a secret service (no keyring daemon) | `FieldCipher.create` throws `UnsupportedError` with the reason, per the base platform rule. |
 
