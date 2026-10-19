@@ -257,7 +257,7 @@ suspend fun page(page: Int, limit: Int): PagingEntity<OrderEntity> = pagedQuery(
    - Android: a value written, then the Tink keyset deleted, reads as absent.
    - iOS, run as an app (`tool/ios-app-test.sh`): a round trip through the Keychain-held key, and the secrets in the app's own file, not plain.
 3. `processStorageCall` with one test per handler row. The disk-full rows use fakes that throw each platform's error.
-4. `pagedQuery` against an in-memory Room database on Android/JVM, and a list-backed fetch in `commonTest`.
+4. `pagedQuery` against a real in-memory SQLite table on the JVM (AndroidX's bundled driver, the engine under Room, without Room's code generation), and a list-backed fetch in `commonTest`, including paging it with `Pager.offset`.
 
 #### Platform setup (the app's part) {#kotlin-platform-setup-the-apps-part}
 
