@@ -291,26 +291,26 @@ suspend fun page(page: Int, limit: Int): PagingEntity<OrderEntity> = pagedQuery(
 
 ### 1. Why {#dart-1-why}
 
-On Flutter, the base stores map onto two well-known plugins: `shared_preferences` for preferences and `flutter_secure_storage` for secrets. This note configures them safely, adds the iOS reinstall rule and the 4 KB limit, and gives the storage guard its handlers for the errors these plugins and the common database packages throw.
+On Flutter, the base stores sit on two well-known plugins: `shared_preferences` for preferences, and `flutter_secure_storage` for the key that encrypts secrets (ADR-26). This note configures them safely and gives the storage guard its handlers for the errors these plugins and the common database packages throw.
 
 ### 2. Shape {#dart-2-shape}
 
 | Store | Backed by | Configuration |
 |---|---|---|
 | `KeyValueStore` | `SharedPreferencesAsync` (no in-memory cache, always read from the platform) | keys prefixed with the store's name |
-| `SecureStore` | `flutter_secure_storage` | iOS/macOS `accessibility: KeychainAccessibility.first_unlock_this_device`; Android's default Keystore-backed ciphers; web uses Web Crypto-wrapped `localStorage` (weaker, documented) |
+| `SecureStore` | a `KeyValueStore` (`<namespace>_secure`) whose values `FieldCipher` (`sinew.secure.<namespace>`) encrypts, as in Kotlin (ADR-26) | `<namespace>:<key>` as associated data; the cipher's key in `flutter_secure_storage` (iOS/macOS `first_unlock_this_device`, Keystore-protected on Android, Web Crypto-wrapped `localStorage` on web: weaker, documented) |
 
 ```dart
 abstract interface class SecureStore implements InspectableStore {
-  static Future<SecureStore> create({String namespace = 'sinew', bool clearOnReinstall = true});
+  static Future<SecureStore> create({String namespace = 'sinew'});
   Future<String?> read(String key);
-  Future<void> write(String key, String value);      // over 4 KB → StorageWriteException through the guard
+  Future<void> write(String key, String value);
   Future<void> delete(String key);
   Future<void> clearUserData();
 }
 ```
 
-**The reinstall rule.** `SecureStore.create` and `BiometricVault.create` both look for a marker in `shared_preferences`, which an uninstall deletes. With no marker, each deletes its own items (the store's namespace, the vault's Keychain item), then writes the marker. On iOS and macOS this clears Keychain items left by a previous install. Elsewhere it's harmless.
+**The reinstall rule.** The secrets are in the app's preferences, which an uninstall deletes, so a reinstall starts empty with no marker; on iOS the cipher's key survives in the Keychain, unused. `BiometricVault` keeps its own Keychain item and clears it with its own install marker (`clearOnReinstall`).
 
 **Serialized writes.** Each store chains its writes on one `Future`, so two writes from different `async` calls never interleave.
 
@@ -348,7 +348,7 @@ Future<PagingEntity<OrderRow>> page(int page, int limit) => pagedQuery(page, lim
 ### 4. Build steps {#dart-4-build-steps}
 
 1. `KeyValueStore`, with `SharedPreferencesAsync`'s in-memory platform in unit tests and an integration test per platform.
-2. `SecureStore`, unit-tested with `FlutterSecureStorage.setMockInitialValues`. Then integration tests:
+2. `SecureStore`, unit-tested with `FlutterSecureStorage.setMockInitialValues` and `SharedPreferencesAsync`'s in-memory platform. Then integration tests:
    - the reinstall rule on the iOS simulator;
    - an undecryptable value reads as absent on Android.
 3. `processStorageCall` with one test per handler row.
@@ -369,7 +369,7 @@ Future<PagingEntity<OrderRow>> page(int page, int limit) => pagedQuery(page, lim
 |---|---|
 | `flutter_secure_storage` fails to read after an Android restore (keys invalid) | Treated as corruption: the value is absent, and the store deletes it. |
 | Web private mode | Storage may be cleared when the window closes. Values read as absent, the session ends. |
-| A secure value over 4 KB | Rejected with `StorageWriteException`. Large data goes in the database, encrypted with `FieldCipher`. |
+| A large secure value | No limit is enforced (the values are in the preferences, not the Keychain), but `SecureStore` is for small secrets: large data goes in the database, encrypted with `FieldCipher`. |
 
 :::info[Decided by default (revisit during implementation)]
 
