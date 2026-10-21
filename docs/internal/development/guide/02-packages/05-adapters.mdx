@@ -321,7 +321,7 @@ class OrderListPage extends HookConsumerWidget {
 |---|---|
 | `useOnOpened(onEvent, event)` | sends `event` once, in a `Future.microtask` after the first build (Riverpod forbids changing a provider during build) |
 | `useEffects(effects, onEffect)` | subscribes once, cancels on unmount, and calls `onEffect` only while the context is mounted |
-| `useNetworkChecker()` | rebuilds on connectivity changes (`sinew_riverpod_providers`) |
+| `useNetworkChecker(checker)` | the current `NetworkStatus`, rebuilding on connectivity changes (`sinew_riverpod_providers`) |
 
 #### `AsyncValue` conversions {#dart-asyncvalue-conversions}
 
@@ -337,14 +337,14 @@ extension ViewStateToAsync<T> on ViewState<T> {
 #### Ready providers {#dart-ready-providers}
 
 ```dart
-final sinewConfigProvider = Provider<SinewConfig>((ref) => throw StateError('Override sinewConfigProvider in your ProviderScope.'));
-final refreshCallProvider = Provider<RefreshCall>((ref) => throw StateError('Override refreshCallProvider in your ProviderScope.'));
-final tokenSourceProvider = Provider<TokenSource>((ref) =>
-    SessionTokenSource(SecureRefreshTokenStore(ref.watch(secureStoreProvider).requireValue), ref.watch(refreshCallProvider)));   // after startup awaited secureStoreProvider.future
+final sinewConfigProvider = Provider<SinewConfig>((ref) => throw StateError('sinewConfigProvider has no value: override it in your ProviderScope, …'));
+final refreshCallProvider = Provider<RefreshCall>((ref) => throw StateError('refreshCallProvider has no value: override it …'));
+final secureStoreProvider = FutureProvider<SecureStore>((ref) => SecureStore.create());   // awaited once at startup, before runApp
+final keyValueStoreProvider = Provider<KeyValueStore>((ref) => KeyValueStore.create());
+final refreshTokenStoreProvider = Provider<RefreshTokenStore>((ref) => SecureRefreshTokenStore(/* secureStoreProvider's value, or a StateError saying to await it */));
+final tokenSourceProvider = Provider<SessionTokenSource>((ref) => SessionTokenSource(ref.watch(refreshTokenStoreProvider), ref.watch(refreshCallProvider)));
 final sinewHttpProvider = Provider<Dio>((ref) => SinewHttp.dio(ref.watch(sinewConfigProvider), ref.watch(tokenSourceProvider)));
 final networkCheckerProvider = Provider<NetworkChecker>((ref) { final c = NetworkChecker(); ref.onDispose(c.dispose); return c; });
-// secureStoreProvider, keyValueStoreProvider, fieldCipherProvider: FutureProviders over the async factories.
-// Synchronous providers that need them read `.requireValue`, so the app awaits each `.future` once at startup (before runApp).
 ```
 
 ### 3. API {#dart-3-api}
