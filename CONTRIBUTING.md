@@ -33,6 +33,20 @@ Run a site locally (Node 20+), from `docs/internal/` or `docs/usage/`:
 - Start dev server: `npm run start`
 - Build static site: `npm run build`
 
+The contributor site runs on port 3000 and the usage site on 3001. The usage site's Contributing link goes to the contributor site: set `SINEW_INTERNAL_URL` (default `http://localhost:3000`) when building it, and each site's own address with `SINEW_INTERNAL_URL` / `SINEW_USAGE_URL`. VS Code launch configurations for both are in `.vscode/`.
+
+Regenerate the Guide after editing the design notes (from `docs/internal/`): `python3 scripts/sync_vault.py <path-to-sinew-design-notes>`.
+
+### Deployment
+Both sites are deployed to Cloudflare Pages by `.github/workflows/docs.yml` when `docs/` changes on `main` in `srctool/sinew`. Pull requests (including from forks) only build them.
+
+| Site | Folder | Cloudflare Pages project | Domain |
+|---|---|---|---|
+| Contributor docs | `docs/internal/` | `sinew-dev` | https://sinew-dev.srctool.com |
+| Usage docs | `docs/usage/` | `sinew` | https://sinew.srctool.com |
+
+The workflow needs two repository secrets: `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`.
+
 ## Workflow
 Sinew is trunk-based: `main` is the only long-lived branch, and every change reaches it through a squash-merged PR. The full guide is the [Git workflow](https://sinew-dev.srctool.com/contributing/git-workflow) page.
 
@@ -66,11 +80,10 @@ Tip for GitKraken users: GitKraken uses the first line of the commit message as 
 - Keep the PR title in Conventional Commits format and ensure the description explains the "what" and "why`. Maintainers may edit the final message for clarity.
 
 ## Code of Conduct
-Participation in this project is governed by the Code of Conduct in each submodule:
-- Kotlin: `kotlin-lib/CODE_OF_CONDUCT.md`
-- Dart: `dart-lib/CODE_OF_CONDUCT.md`
+Participation in this project is governed by the [Code of Conduct](CODE_OF_CONDUCT.md). The same code applies in `sinew-kotlin` and `sinew-dart`. To report a conduct issue, email contact@srctool.com.
 
-For sensitive reports, email contact@srctool.com.
+## Security
+Please don't report a vulnerability in a public issue. See [SECURITY.md](SECURITY.md) for how to report one privately.
 
 ## License
 - Root repo (docs & concepts): MIT (see LICENSE)
