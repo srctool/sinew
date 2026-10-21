@@ -1,0 +1,15 @@
+# Code owners are requested for review on every pull request that touches their paths.
+# Later rules take precedence over earlier ones.
+
+# Default: everything in this repository
+*                   @dwikiriyadi
+
+# Documentation sites
+/docs/              @dwikiriyadi
+
+# CI, repository settings and community files
+/.github/           @dwikiriyadi
+
+# Submodule pointers (normally moved by Dependabot)
+/kotlin-lib         @dwikiriyadi
+/dart-lib           @dwikiriyadi
