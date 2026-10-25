@@ -1,94 +1,163 @@
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-Website-blue.svg)](docs/)
+# Sinew
 
-# Sinew - SRC Tool
+[![License: MIT (docs)](https://img.shields.io/badge/docs-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0 (libraries)](https://img.shields.io/badge/libraries-Apache%202.0-blue.svg)](https://github.com/srctool/sinew-kotlin/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-sinew.srctool.com-informational.svg)](https://sinew.srctool.com)
+![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-orange.svg)
 
-**Sinew** is a plug-and-play app architecture for Kotlin Multiplatform and Flutter, part of the **SRC Tool** family alongside [Camouflage](https://github.com/srctool/camouflage). Sinews connect muscle to bone; Sinew connects an app's layers, data → domain → presentation, so new apps stop rewriting response mapping, paging, error types, the HTTP client with token refresh, and secure storage. Sinew ships the mechanism; the app ships the configuration.
+**The app plumbing you rewrite in every project, done once, for Kotlin Multiplatform and Flutter.**
 
-This repository is the umbrella for the documentation and the language-specific implementations, which are included as Git submodules. The libraries live under `kotlin-lib/` and `dart-lib/`. The documentation site is built with Docusaurus under `docs/`.
+Every new app needs the same things: map API responses to domain models, turn failures into errors the UI can show, page through lists, keep screen state, refresh tokens without a race, and store secrets safely. Sinew ships these as small packages you add one at a time. Sinew provides the mechanism, and your app provides the configuration (its JSON keys, base URLs, error codes and DI).
 
----
+Sinew is part of the **SRC Tool** family, alongside [Camouflage](https://github.com/srctool/camouflage) (UI). Each one works without the other.
 
-## Repository structure
-```
-├── README.md                  # This overview
-├── LICENSE                    # Main repo license (MIT)
-├── docs/                      # Two Docusaurus sites, deployed separately
-│   ├── internal/              # Contributor docs: design, architecture, implementation (generated Guide + Contributing)
-│   └── usage/                 # Usage docs: for developers using Sinew in an app
-├── kotlin-lib/                # Kotlin Multiplatform implementation (submodule: srctool/sinew-kotlin)
-└── dart-lib/                  # Dart and Flutter implementation (submodule: srctool/sinew-dart)
-```
+> **Status: pre-1.0.** Nothing is published to Maven Central or pub.dev yet, and the API may change before 1.0. The models, errors, paging, presentation, network, security and storage packages are implemented on both platforms. Testing helpers, the Camouflage glue and the sample apps are in progress. See the [roadmap](https://sinew-dev.srctool.com/guide/project/roadmap).
 
 ---
+
+## What it looks like
+
+Declare what your backend sends and what your app needs. Sinew handles the mapping and the error handling in between.
+
+```kotlin
+// Domain: what the app works with
+data class Order(val id: String, val total: Long) : Domain
+
+// Remote: what the API sends. Fields are nullable, and toDomain() picks the fallbacks.
+@Serializable
+class OrderRemote(val id: String? = null, val total: Long? = null) : Remote<Order>() {
+    override fun toDomain() = Order(id = id.orEmpty(), total = total ?: 0)
+}
+
+// Your backend's response shape. You declare the fields, and the base class maps the payload.
+@Serializable
+class ObjectResponse<T : Remote<D>, D : Domain>(override val data: T? = null) : ObjectEnvelope<T, D>()
+
+// Repository: one guarded call. Any failure becomes a typed SinewException with a code like ORD-R-CANCEL-NIC.
+suspend fun cancel(id: String): Result<Order> = processApiCall("ORD", "CANCEL") { api.cancel(id) }
+
+// View model: no try/catch, one immutable state, one-off effects
+class OrderViewModel(private val repo: OrderRepository) :
+    StateEffectViewModel<ViewState<Order>, OrderEffect>(ViewState.Loading()) {
+
+    fun cancel(id: String) = viewModelScope.launch {
+        repo.cancel(id).fold(
+            onSuccess = { setState { ViewState.Done(it) }; emitEffect(OrderEffect.Cancelled) },
+            onFailure = { setState { ViewState.Failed(dataOrNull, it) } },
+        )
+    }
+}
+```
+
+<details>
+<summary>The same in Dart</summary>
+
+```dart
+class Order extends Domain {
+  const Order({required this.id, required this.total});
+  final String id;
+  final int total;
+
+  @override
+  List<Object?> get props => [id, total];
+}
+
+class OrderRemote extends Remote<Order> {
+  const OrderRemote({this.id, this.total});
+  final String? id;
+  final int? total;
+
+  @override
+  Order toDomain() => Order(id: id ?? '', total: total ?? 0);
+}
+
+class ObjectResponse<T extends Remote<D>, D extends Domain> extends ObjectEnvelope<T, D> {
+  const ObjectResponse({this.data});
+
+  @override
+  final T? data;
+}
+
+Future<Result<Order>> cancel(String id) => processApiCall('ORD', 'CANCEL', () => api.cancel(id));
+```
+
+On Flutter, view models are Riverpod notifiers that use the `StateEffectNotifier` and `EventActionNotifier` mixins from `sinew_riverpod`.
+
+</details>
+
+## Features
+
+- **Envelopes that map themselves.** Declare your response shape once. Every object, list and page is mapped, and you never write a mapper function. Sinew assumes no JSON keys: `success`, `message` and page metadata are read from your own fields.
+- **One error model, end to end.** Each layer turns failures into a typed `SinewException` with a stable code, and returns a `Result`. View models never `try`/`catch`. Error messages are localized and re-render when the language changes. English and Indonesian are included.
+- **State-driven paging.** `Pager<T>` owns the rules (first load, load more, retry, refresh, end of list, race conditions). A list screen only says how to fetch one page.
+- **Presentation base classes.** Event → action → state + effect, framework-neutral, with adapters for AndroidX `ViewModel` and Riverpod.
+- **HTTP client layers.** Built on Ktor or Dio, which you keep using directly. It adds single-flight token refresh (ten parallel 401s cause one refresh), timeouts, retry, polling, redacted logging and a network checker.
+- **Secure storage and encryption.** `SecureStore`, `KeyValueStore`, field encryption with Tink AEAD, and a biometric vault. No hand-rolled cryptography.
+- **Testing helpers.** Fakes for every service, plus paging race helpers.
+- **Optional extras.** `sinew_camouflage` connects paging to Camouflage's `CamoPagedList`. DevTools (an in-app inspector, compiled out of release builds) is planned for 1.1.
+
+Each package depends only on the ones before it. For example, an app that only wants paging adds `sinew_paging` and gets models and exceptions with it, and nothing else.
+
+## Platforms
+
+| | Kotlin Multiplatform | Flutter / Dart |
+|---|---|---|
+| Targets | Android, iOS, JVM desktop, wasmJs (also usable from a plain Android app) | Android and iOS. The pure-Dart packages (models, exception, paging, presentation) run anywhere Dart runs. |
+| Built on | Ktor 3, kotlinx.serialization, AndroidX ViewModel | Dio 5, Riverpod |
+| Coordinates (at 1.0) | `com.srctool.sinew:sinew-*` with `sinew-bom` | `sinew_*` on pub.dev |
+| Source | [srctool/sinew-kotlin](https://github.com/srctool/sinew-kotlin) | [srctool/sinew-dart](https://github.com/srctool/sinew-dart) |
+
+## Trying it before 1.0
+
+Until the first release, use Sinew from source.
+
+**Kotlin.** Clone [sinew-kotlin](https://github.com/srctool/sinew-kotlin) and include it as a composite build. Gradle then resolves the `com.srctool.sinew` modules from the source:
+
+```kotlin
+// settings.gradle.kts
+includeBuild("../sinew-kotlin")
+```
+
+**Dart.** Depend on a package through git:
+
+```yaml
+dependencies:
+  sinew_network:
+    git:
+      url: https://github.com/srctool/sinew-dart.git
+      path: packages/sinew_network
+```
 
 ## Documentation
 
-There are two documentation sites, each its own Docusaurus project, built and deployed separately:
+- **[Usage docs](https://sinew.srctool.com):** adding Sinew to an app, wiring it, and building screens. These fill in as the 1.0 API settles.
+- **[Design guide](https://sinew-dev.srctool.com/guide):** the architecture, the error model, and every package with its Kotlin and Flutter implementation, plus the roadmap and the design decisions.
 
-- **Contributor docs** (`docs/internal/`): the architecture, the error model, every package with its Kotlin and Flutter implementation, the roadmap and the decisions, plus Contributing. The Guide pages are generated from the Sinew design notes by `docs/internal/scripts/sync_vault.py`; don't edit them by hand.
-- **Usage docs** (`docs/usage/`): adding Sinew to an app, wiring it, and building screens on it. Written by hand; they start with the first release.
+## Contributing
 
-The usage site doesn't link to the contributor docs directly: its **Contributing** link goes to the contributor site's Contributing section, which leads into the Guide. Set `SINEW_INTERNAL_URL` (default `http://localhost:3000`) when building the usage site, and each site's own address with `SINEW_INTERNAL_URL` / `SINEW_USAGE_URL`.
+Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Library changes go to [sinew-kotlin](https://github.com/srctool/sinew-kotlin) or [sinew-dart](https://github.com/srctool/sinew-dart). Documentation and cross-platform design changes go to this repository.
 
-Regenerate the Guide after editing the design notes (from `docs/internal/`):
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
-```bash
-python3 scripts/sync_vault.py <path-to-sinew-design-notes>
+### About this repository
+
+This is the umbrella repository. It holds the documentation sites and includes both libraries as Git submodules:
+
 ```
-
-Run a site locally (Node 20+), from `docs/internal/` or `docs/usage/`: `npm install`, then `npm run start` (the contributor site runs on port 3000, the usage site on 3001); `npm run build` for a production build. VS Code launch configurations for both are in `.vscode/`.
-
-### Deployment
-
-Both sites are deployed to Cloudflare Pages by `.github/workflows/docs.yml` when `docs/` changes on `main` in `srctool/sinew`. Pull requests (including from forks) only build them.
-
-| Site | Folder | Cloudflare Pages project | Domain |
-|---|---|---|---|
-| Contributor docs | `docs/internal/` | `sinew-dev` | https://sinew-dev.srctool.com |
-| Usage docs | `docs/usage/` | `sinew` | https://sinew.srctool.com |
-
-The workflow needs two repository secrets: `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`.
-
-The sites include a Kotlin/Dart language switcher. Wrap language-specific content in `KotlinOnly` / `DartOnly`, or code examples in `LangTabs`, so readers keep their preferred language across pages.
-
----
-
-## Submodules
-
-Submodule pointers are moved by Dependabot: it checks the libraries' `main` daily and opens a PR that updates `kotlin-lib` and `dart-lib` (see `.github/dependabot.yml`). The submodule URLs use HTTPS, so cloning needs no SSH key:
+├── docs/usage/      # Usage docs site (Docusaurus)
+├── docs/internal/   # Design guide and contributor docs site (Docusaurus)
+├── kotlin-lib/      # submodule: srctool/sinew-kotlin
+└── dart-lib/        # submodule: srctool/sinew-dart
+```
 
 ```bash
 git clone --recurse-submodules https://github.com/srctool/sinew.git
 ```
 
-The libraries are built, tested and released in their own repositories; this repository has no release of its own.
-
-### Kotlin implementation (`kotlin-lib/`)
-- Kotlin Multiplatform: Android, iOS, JVM desktop, wasmJs. Maven Central `com.srctool.sinew:sinew-*`, with a BOM.
-- Upstream: https://github.com/srctool/sinew-kotlin
-- License: Apache 2.0
-
-### Dart implementation (`dart-lib/`)
-- A pub workspace managed by Melos, one package per Sinew package. pub.dev `sinew_*`.
-- Upstream: https://github.com/srctool/sinew-dart
-- License: Apache 2.0
-
-The root `settings.gradle.kts` includes `kotlin-lib` as a composite build, so opening the repository root in Android Studio works.
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the Contributing section of the docs. Changes that affect one implementation go to its submodule repository; documentation and cross-cutting changes go here.
-
----
+Opening the root in Android Studio works: `settings.gradle.kts` includes `kotlin-lib` as a composite build.
 
 ## License
 
-- Main repository (docs and design): MIT License
-- Kotlin and Dart implementations: Apache 2.0 License
+The libraries are licensed under [Apache 2.0](https://github.com/srctool/sinew-kotlin/blob/main/LICENSE). The documentation and design material in this repository are licensed under [MIT](LICENSE).
 
-## Contact
-
-contact@srctool.com
+Contact: contact@srctool.com
