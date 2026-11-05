@@ -63,6 +63,12 @@ CamoPagedList(
 
 `sinew_camouflage` is released in Sinew's lockstep, and declares the Camouflage version range it was tested with. A Camouflage release that changes `CamoPagedListState` needs a new `sinew_camouflage` release. Nothing else in Sinew is affected.
 
+##### Before Camouflage publishes
+
+Camouflage reaches Maven Central and pub.dev at its M15 (v0.1), after Sinew's S5. Until then, `sinew_camouflage` builds against Camouflage's source at a pinned commit, and it can't be released: a published package can't depend on source. So this blocks Sinew's 1.0 release, not S5.
+
+Before S6's release, replace the pin with the published Camouflage version on each platform, as that platform's note says.
+
 ### 3. API
 
 | Name | Signature (pseudocode) | For |
@@ -85,6 +91,7 @@ CamoPagedList(
 | Case | Decided behavior |
 |---|---|
 | A Camouflage release changes `CamoPagedListState` | Only `sinew_camouflage` changes, in a new Sinew lockstep release. Its declared version range stops apps from mixing incompatible versions. |
+| Sinew's 1.0 release comes up before Camouflage has published | The release waits. `sinew_camouflage` can't ship pinned to source, and Sinew's packages release in lockstep. |
 | An empty first page | `Done([])` → `items = []`, `loading = None`, `endReached = true` (an empty page has no next page). `CamoPagedList` shows its empty state. |
 | A `Done` state whose meta says there's a next page but the list is shorter than the screen | `CamoPagedList` fires `onLoadMore` right away, and the pager loads the next page. |
 | The app doesn't use Sinew's `Localizer` | It passes `null`: messages fall back to the English fallback or the server text. |
@@ -149,6 +156,7 @@ CamoPagedList(
 | Case | Decided behavior |
 |---|---|
 | Camouflage's `PagedErrorScope` naming differs in the released API | The glue follows Camouflage's released names. Only this file changes. |
+| Camouflage isn't published yet | `third_party/camouflage-kotlin` is a Git submodule at a pinned commit, and `settings.gradle.kts` includes it as a composite build, so Gradle builds `camouflage-core` from source for only the targets it needs. Clone with `--recurse-submodules`. Before 1.0: set the released version in `gradle/camouflage.versions.toml`, remove the submodule and its `includeBuild`, and remove `submodules: true` from CI. `publish.yml` doesn't check out the submodule, so a release fails until then instead of publishing a snapshot dependency. |
 
 :::info[Decided by default (revisit during implementation)]
 
@@ -213,6 +221,7 @@ CamoPagedList<Order>(
 | Case | Decided behavior |
 |---|---|
 | Camouflage renames a type in its released API | Only this file changes, in the next Sinew release. |
+| Camouflage isn't published yet | `sinew_camouflage`'s `pubspec.yaml` has a `git` dependency on `camouflage_core` at a pinned commit, and `publish_to: none`, since pub.dev rejects git dependencies. Before 1.0: replace it with the published version range and remove `publish_to`. |
 
 :::info[Decided by default (revisit during implementation)]
 
