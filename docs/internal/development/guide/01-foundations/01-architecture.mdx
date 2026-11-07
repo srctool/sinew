@@ -186,7 +186,7 @@ Each package's own API is in its note under `02 - Packages/`.
 2. Create one empty module or package per v1 package, with the dependency edges from the graph above and nothing else.
 3. Add a CI check that fails on any dependency edge not in the graph (a module-graph assertion on Kotlin, a script over each `pubspec.yaml` on Flutter).
 4. Make every empty package compile on every target (Kotlin: Android, iOS, JVM, wasmJs. Flutter: the platforms each package supports).
-5. Publish nothing yet. Publishing is milestone S6.
+5. Publish nothing yet. Publishing is milestone S7.
 
 **Done when**
 - [ ] Every v1 package exists on both platforms, compiles on every supported target, and depends only on the packages the graph allows.

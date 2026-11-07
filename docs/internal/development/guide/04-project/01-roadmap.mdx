@@ -19,8 +19,8 @@ Sinew is built **waterfall**: every note in `base/`, `kotlin/` and `flutter/` is
 | **S3 Network** | `SinewHttp`, the six layers, the auth layer, `processApiCall`, the handlers, retry and polling, the network checker | [Network](/guide/packages/network) | ten parallel 401s cause one refresh, and a refresh failing because the backend is down keeps the session |
 | **S4 Security + Storage** | `FieldCipher`, `BiometricVault`; `SecureStore`, `KeyValueStore`, `processStorageCall`, `pagedQuery`, `InspectableStore` | [Security](/guide/packages/security), [Storage](/guide/packages/storage) | no storage failure crashes the app, and an iOS reinstall starts with an empty secure store |
 | **S5 Testing + Glue** | `sinew_testing`; `sinew_camouflage`; `sinew_riverpod_providers`; one sample app per platform with a list screen through `CamoPagedList` | [Testing](/guide/packages/testing), [Camouflage Glue](/guide/packages/camouflage-glue) | the sample list screen runs the full cycle (skeleton, items, more, retry, refresh, end) on each platform |
-| **S6 Publish 1.0** | lockstep release on pub.dev and Maven Central (`com.srctool.sinew`), the Kotlin BOM, changelogs | the platform `05 - Delivery` notes | a fresh app on each platform resolves 1.0 and runs the sample screen |
-| **S7 DevTools (1.1)** | `sinew_devtools`, `sinew_devtools_ui`, `sinew-devtools-noop`, gating, the built-in inspectors | [DevTools](/guide/packages/dev-tools) | a production release or profile build contains no devtools code (checked in CI), and no stored record contains a secret |
+| **S6 DevTools** | `sinew_devtools`, `sinew_devtools_ui`, `sinew-devtools-noop`, gating, the built-in inspectors | [DevTools](/guide/packages/dev-tools) | a production release or profile build contains no devtools code (checked in CI), and no stored record contains a secret |
+| **S7 Publish 1.0** | lockstep release on pub.dev and Maven Central (`com.srctool.sinew`), the Kotlin BOM, changelogs | the platform `05 - Delivery` notes | a fresh app on each platform resolves 1.0 and runs the sample screen |
 
 ## Later
 

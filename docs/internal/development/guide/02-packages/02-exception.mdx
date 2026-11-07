@@ -378,6 +378,8 @@ Compose resources are read asynchronously (a fetch on web), but `Localizer.resol
 
 **Escaping:** Compose resources don't unescape `\'` the way Android resources do, so apostrophes are written plainly (`You're offline.`). A test checks every English resource equals the exception's English fallback, which catches a stray backslash.
 
+**Packaging on Android:** `sinew-l10n` sets `androidResources { enable = true }` on its Android target. AGP's KMP library target leaves it off, and then the strings never reach the APK, so showing a localized error throws `MissingResourceException`. Host tests can't see this, so the sample's full-cycle test on a device is what guards it.
+
 #### Indonesian texts {#kotlin-indonesian-texts}
 
 | Key | Indonesian |

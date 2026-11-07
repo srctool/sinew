@@ -23,7 +23,7 @@ So apps grow an in-app developer dashboard behind a floating button. That's usef
 - it masks secrets and never copies them;
 - it asks before anything destructive.
 
-It ships as **1.1**, after the 1.0 packages it inspects.
+It ships in **1.0**, as the last milestone before the release.
 
 ### 2. Shape
 
@@ -151,6 +151,23 @@ FaultRule(method: String? = null, pathPattern: String, status: Int? = null, dela
 | The dashboard has its own theme and its own back stack, shown above the app | It works the same in every app, whatever router or theme the app uses, and never pushes a route into the app's navigation |
 | The button hides while the dashboard is open | |
 
+#### The launcher: where the entry point goes
+
+The way in to the dashboard is a choice the app makes with one parameter, `launcher`. The dashboard, its theme and its back stack are the same whichever launcher is chosen.
+
+| Launcher | What the developer gets | When to use it |
+|---|---|---|
+| `FloatingLauncher(initialPosition = bottomEnd)` (**default**) | The floating button above, draggable, with its position remembered | Most apps: nothing to place, reachable on every screen |
+| `MenuLauncher` | No floating button. The app puts `DevToolsMenuItem` (a ready row with the devtools icon and label) wherever it wants: a settings screen, a drawer, an About page. The row opens the dashboard on tap. | Apps where a button over the screen gets in the way, or QA works from a settings menu |
+| `CustomLauncher` | No UI from devtools. The app calls `DevTools.open()` from any trigger it likes (a long press on the logo, a shake, a hidden tap sequence) and `DevTools.close()` | Apps with their own entry gesture |
+
+| Rule | Why |
+|---|---|
+| The launcher only decides how the dashboard opens. Recorders, fault rules and the ribbon work the same with any launcher. | Capture never depends on the UI choice |
+| `DevToolsMenuItem` and `DevTools.open()` obey the same gating as the overlay: they exist only where devtools is on, and the no-op build turns them into empty stubs | A menu item can't leak devtools code into a production build |
+| `MenuLauncher` and `CustomLauncher` keep the dashboard's own theme and back stack | The row sits in the app's screen, but what it opens never uses the app's navigation |
+| The app's shared code receives only a plain callback (`onOpenDevTools: (() -> Unit)?`), never a devtools type | The platform entry point stays the only place that depends on devtools |
+
 #### Gating
 
 | Build | Devtools |
@@ -182,7 +199,10 @@ Also Later:
 | Name | Signature (pseudocode) | Package |
 |---|---|---|
 | `DevToolSection`, `DevToolEntry`, `BuildRibbon` | as above | devtools |
-| `SinewDevTools` | `SinewDevTools(enabled, sections, ribbon, redaction = Redaction.default, stores: List<InspectableStore> = [], changelog: String? = null, hosts: List<String> = [], showUncaughtErrors = !debug) { app }` | devtools-ui |
+| `SinewDevTools` | `SinewDevTools(enabled, sections, ribbon, launcher = FloatingLauncher(), redaction = Redaction.default, stores: List<InspectableStore> = [], changelog: String? = null, hosts: List<String> = [], showUncaughtErrors = !debug) { app }` | devtools-ui |
+| `DevToolsLauncher` | `FloatingLauncher(initialPosition)` \| `MenuLauncher` \| `CustomLauncher` | devtools-ui |
+| `DevToolsMenuItem` | a ready menu row that opens the dashboard (`MenuLauncher`) | devtools-ui |
+| `DevTools.open` / `DevTools.close` | `open()`, `close()`, `isOpen` | devtools (no-op without devtools) |
 | `SinewDevTools.clearUserData` | `clearUserData()` | devtools (no-op without devtools) |
 | `DevToolsGate` | `DevToolsGate.enabled: Boolean` (compile-time) | devtools |
 | `Redaction` | `Redaction(headers, fieldParts, exactFields, mask, maxBodyBytes)`, `Redaction.default`, `+ { … }` | devtools |
@@ -276,6 +296,11 @@ fun appClients(hooks: SinewHttpHooks): Clients = Clients(main = SinewHttp.client
 CrashReporter.install(DevToolsCrashReporter(wrapping = realReporter))
 setContent { SinewDevTools(sections = listOf(productSection), ribbon = BuildRibbon(versionLabel)) { App(appClients(DevTools.httpHooks)) } }
 
+// choosing where the entry goes (default is FloatingLauncher): a menu row the app places itself
+setContent { SinewDevTools(sections = listOf(productSection), launcher = MenuLauncher) { App(appClients(DevTools.httpHooks), onOpenDevTools = DevTools::open) } }
+// inside App(), in the settings screen: onOpenDevTools?.let { open -> SettingsRow("Developer tools", onClick = open) }
+// or place the ready row from the platform entry point: DevToolsMenuItem()
+
 // iosMain: MainViewController, the same lines; jvmMain / wasmJsMain: main(), the same lines
 ```
 
@@ -314,8 +339,11 @@ As the base note. Kotlin specifics:
 
 | Name | Kotlin |
 |---|---|
-| `SinewDevTools` | `@Composable public fun SinewDevTools(sections: List<DevToolSection> = emptyList(), ribbon: BuildRibbon? = null, redaction: Redaction = Redaction.Default, stores: List<InspectableStore> = emptyList(), changelog: String? = null, hosts: List<String> = emptyList(), showUncaughtErrors: Boolean = …, content: @Composable () -> Unit)` |
+| `SinewDevTools` | `@Composable public fun SinewDevTools(sections: List<DevToolSection> = emptyList(), ribbon: BuildRibbon? = null, launcher: DevToolsLauncher = FloatingLauncher(), redaction: Redaction = Redaction.Default, stores: List<InspectableStore> = emptyList(), changelog: String? = null, hosts: List<String> = emptyList(), showUncaughtErrors: Boolean = …, content: @Composable () -> Unit)` |
 | `DevTools.httpHooks` | `public val httpHooks: SinewHttpHooks` |
+| `DevToolsLauncher` | `public sealed interface DevToolsLauncher`; `FloatingLauncher(initialPosition: Alignment = Alignment.BottomEnd)`, `MenuLauncher`, `CustomLauncher` |
+| `DevToolsMenuItem` | `@Composable public fun DevToolsMenuItem(modifier: Modifier = Modifier)`; the no-op artifact has an empty one |
+| `DevTools.open` / `DevTools.close` | `public fun open()`, `public fun close()`, `public val isOpen: StateFlow<Boolean>` |
 | `DevTools.clearUserData` | `public fun clearUserData()` |
 
 ### 4. Build steps {#kotlin-4-build-steps}
@@ -392,6 +420,17 @@ Because `DevToolsGate.enabled` is `const`, the compiler removes the `true` branc
 
 `SinewDevTools` puts its floating button and dashboard in an `Overlay` above the app, with its own `Navigator` and its own `Theme` (Material 3, independent of the app's theme). It never uses the app's router or `BuildContext` navigation.
 
+#### The launcher {#dart-the-launcher}
+
+`SinewDevTools(launcher: …)` picks the entry point: `FloatingLauncher(initialAlignment: Alignment.bottomRight)` (default), `MenuLauncher`, or `CustomLauncher`. With `MenuLauncher`, the app places `const DevToolsMenuItem()` (a ready `ListTile`) in a settings page or drawer; with `CustomLauncher`, it calls `DevTools.open()` from its own trigger. All three sit behind `DevToolsGate.enabled`, so production builds tree-shake the launcher and the menu item away. Shared widgets take a plain `VoidCallback? onOpenDevTools`, never a devtools type.
+
+```dart
+runApp(DevToolsGate.enabled
+    ? SinewDevTools(sections: [productSection], launcher: const MenuLauncher(), child: App(onOpenDevTools: DevTools.open))
+    : const App());
+// in the settings page: if (onOpenDevTools != null) ListTile(title: const Text('Developer tools'), onTap: onOpenDevTools)
+```
+
 #### Native-plugin inspectors {#dart-native-plugin-inspectors}
 
 EXIF, camera and map playgrounds are separate packages. Flutter links every plugin's native code into release builds, even when Dart tree-shaking removes the Dart side, so these never ship inside `sinew_devtools_ui`.
@@ -405,8 +444,11 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 | Name | Dart |
 |---|---|
 | `DevToolsGate.enabled` | `static const bool` |
+| `DevToolsLauncher` | `sealed class`; `FloatingLauncher({Alignment initialAlignment = Alignment.bottomRight})`, `MenuLauncher()`, `CustomLauncher()` (all `const`) |
+| `DevToolsMenuItem` | `const DevToolsMenuItem({Key? key})`, a `ListTile` that opens the dashboard |
+| `DevTools.open` / `DevTools.close` | `static void open()`, `static void close()`, `static ValueListenable<bool> isOpen` |
 | `DevToolsGate.assertMatchesFlavor` | `static void assertMatchesFlavor()`: compares the define with Flutter's `appFlavor` |
-| `SinewDevTools` | `SinewDevTools({required Widget child, List<DevToolSection> sections = const [], BuildRibbon? ribbon, Redaction redaction = Redaction.standard, List<InspectableStore> stores = const [], String? changelog, List<String> hosts = const [], bool? showUncaughtErrors})` |
+| `SinewDevTools` | `SinewDevTools({required Widget child, List<DevToolSection> sections = const [], BuildRibbon? ribbon, DevToolsLauncher launcher = const FloatingLauncher(), Redaction redaction = Redaction.standard, List<InspectableStore> stores = const [], String? changelog, List<String> hosts = const [], bool? showUncaughtErrors})` |
 | `DevTools.httpHooks`, `DevTools.clearUserData()` | as the base note |
 
 ### 4. Build steps {#dart-4-build-steps}

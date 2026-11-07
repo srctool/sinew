@@ -101,7 +101,8 @@ A short log of the decisions that shape Sinew. An ADR is never edited after it's
   - Packages: `sinew_devtools` (capture, no UI) and `sinew_devtools_ui` (its own theme and back stack); a Kotlin no-op artifact.
   - Gating: on in debug builds and non-production release builds, compiled out of production release and profile builds, and checked in CI.
   - Data safety: redaction happens when recording, at any JSON depth. Secrets are masked to their last four characters and never copied. Fault rules live in memory only. Native-plugin inspectors are separate packages.
-  - It ships as 1.1.
+  - Entry point: a draggable floating button by default; a `launcher` option lets the developer choose a menu row or their own trigger instead.
+  - It ships in 1.0.
 - **Consequences:** apps add their own sections. Sinew's section comes first.
 
 ### ADR-18 Waterfall docs, Kotlin first per milestone
