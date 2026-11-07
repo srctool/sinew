@@ -82,6 +82,7 @@ flowchart BT
     RP --> ST
     DT[sinew_devtools] --> NW
     DT --> ST
+    DT --> EX
     DU[sinew_devtools_ui] --> DT
     DU --> L10
     L10[sinew_l10n] --> EX
@@ -95,7 +96,7 @@ flowchart BT
 | Only `sinew_camouflage` knows Camouflage, and Camouflage never knows Sinew | Either library can be used without the other |
 | `sinew_testing` is a test-only dependency | Fakes never reach production code |
 | Network and storage expose hook points (`SinewHttpHooks`, `InspectableStore`) that do nothing until devtools pass real hooks. `sinew_devtools` depends on network and storage to provide those hooks; network and storage never depend on devtools. | Production code paths don't change when devtools are absent, and devtools are an opt-in dependency |
-| The adapters depend on exception (`toViewState` creates `UnexpectedException`); the glue depends on l10n (its convenience overload reads Sinew's localizer); `sinew_riverpod_providers` reaches security through storage | Every edge used in code is in this graph, so the CI graph check can enforce it |
+| The adapters depend on exception (`toViewState` creates `UnexpectedException`); the glue depends on l10n (its convenience overload reads Sinew's localizer); devtools depends on exception (`DevToolsCrashReporter` wraps the app's `CrashReporter`, and the Exception Log reads `SinewException`); `sinew_riverpod_providers` reaches security through storage | Every edge used in code is in this graph, so the CI graph check can enforce it |
 
 #### Mechanism vs. configuration
 
