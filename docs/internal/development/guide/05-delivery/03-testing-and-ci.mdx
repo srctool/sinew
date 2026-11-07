@@ -40,7 +40,7 @@ Gradle tasks CI calls: `check`, `checkKotlinAbi`, `checkSinewGraph`, `koverVerif
 1. The `jvm-android` job at S0, with everything that runs on the JVM.
 2. `ios` and `web` jobs at S0, on placeholder tests.
 3. `android-device` at S4, when secure storage and biometrics exist.
-4. `devtools-gating` at S7.
+4. `devtools-gating` at S6.
 
 **Done when**
 - [ ] All jobs are green on `main`, and the gating job fails on a branch that adds the real devtools to the production variant.
@@ -94,7 +94,7 @@ Melos scripts CI calls: `analyze`, `format`, `graph`, `test`, `publish --dry-run
 1. `analyze` and `test` at S0.
 2. `web` and `desktop` at S0, on placeholder tests.
 3. `android` and `ios` at S4, when security and storage exist.
-4. `devtools-gating` at S7.
+4. `devtools-gating` at S6.
 
 **Done when**
 - [ ] All jobs are green on `main`. The gating job fails on a branch that removes the `const` from `DevToolsGate.enabled`.
