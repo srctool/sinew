@@ -84,7 +84,7 @@ SinewDevTools(
 
 | Inspector | Kind | Fed by | Safety rule |
 |---|---|---|---|
-| **Network Monitor** | Page | the network recorder layer, plus cache serves the app reports | Redacted when recorded. Capped at 200 records. Cleared on sign-out. |
+| **Network Monitor** | Page | the network recorder layer, plus cache serves the app reports | Redacted when recorded. Capped at 200 records. Cleared on sign-out. Copy and Copy as cURL give the redacted record; Replay sends it again through the app's client (see Copy and replay). |
 | **Exception Log** | Page | a `CrashReporter` decorator, plus the platform's uncaught-error hooks | Capped at 50, with repeats within 2 seconds merged into one row with a count. Copy gives the redacted text only. |
 | **Key-Value Store** | Page | `KeyValueStore` through `InspectableStore` | Values shown. Edit and delete ask for confirmation. |
 | **Secure Store** | Page | `SecureStore` through `InspectableStore` | Values **masked**: the last 4 characters and the length (`•••• 9f2c (412 chars)`). Never copyable. "Clear all" asks for confirmation. |
@@ -113,22 +113,43 @@ Redaction(
 | A normalized name is redacted when it **contains** any of `fieldParts` (`refreshtoken`, `newpassword`, `idtoken`, `xapikey` all match), or equals one of `exactFields` | New fields that carry secrets are caught by their names, without updating a list |
 | Matching runs at **any depth** of a JSON body, including objects inside arrays | A password nested in `{ "user": { "credentials": [ { "password": … } ] } }` is still caught |
 | Every header the app sends through `defaultHeaders` is redacted automatically | Those are exactly the headers that carry API keys and device identifiers |
-| Form bodies and query parameters are redacted by the same field list | Tokens also travel as `?token=…` and form fields |
+| Form bodies, query parameters and fragment parameters are redacted by the same field list, with names percent-decoded first | Tokens also travel as `?token=…`, form fields, and an OAuth redirect's `#access_token=…` |
 | A body over `maxBodyBytes` is cut, with its real size shown | Large downloads don't fill memory |
 | Binary bodies (images, files) are stored as type and size only | Nothing useful to read, and they can contain personal data |
 | Cache records go through the same redaction | A cached response is still a response |
 | An app extends the defaults, never replaces them wholesale | A custom list can't accidentally drop `Authorization` |
+| A redacted text body says whether anything in it was hidden | The recorder needs it to decide whether a request can be replayed |
 
 #### Recorders
 
 | Recorder | Keeps | Cleared |
 |---|---|---|
-| `NetworkRecorder(capacity = 200)` | method, URL, status, duration, redacted headers and bodies, error type and code, a "served from cache" marker | on sign-out, on "Clear" in the page, on app restart |
+| `NetworkRecorder(capacity = 200)` | method, URL, status, duration, redacted headers and bodies, error type and code, a "served from cache" marker, the client that sent it, whether it can be replayed, and whether it is a replay | on sign-out, on "Clear" in the page, on app restart |
 | `ExceptionRecorder(capacity = 50, dedupeWindow = 2 s)` | time, exception type, code, message key or server text, stack trace, repeat count | on "Clear", on app restart |
 
 The recorders keep data in memory only and never write it to disk. The app's sign-out use case calls `SinewDevTools.clearUserData()`. In a build without devtools, that call does nothing.
 
 `DevToolsCrashReporter` wraps the app's real reporter: `CrashReporter.install(DevToolsCrashReporter(wrapping = realReporter))`. Every report goes to the Exception Log and then on to the real reporter, unchanged.
+
+#### Copy and replay
+
+A tester checking data after a backend fix shouldn't have to walk the app back to that screen. So a record in the Network Monitor offers three actions:
+
+| Action | What it gives | Rule |
+|---|---|---|
+| **Copy** | the record as text: method, URL, status, headers, bodies, timing | Exactly what was recorded, so every secret is still `•••` |
+| **Copy as cURL** | a `curl` command for the request | The same redacted values. A request that needs a token won't run as copied: it's for a bug report, not for running. |
+| **Replay** | the same request, sent again through **the app's own client** | The rules below |
+
+| Replay rule | Why |
+|---|---|
+| It goes through the client that sent the original, so the auth layer adds a **fresh** token and the client adds its `defaultHeaders` | The token is never in the record, and never needs to be. Fault rules and the host override apply too, as for any request. |
+| Only a request where **nothing else was hidden** can be replayed: its URL, its own headers and its body kept everything. `Authorization` and the `defaultHeaders` don't count, since the client adds them again. | A login, an OTP check or a call with `?token=` lost the secret it needs. Replaying `•••` would send garbage. The page shows "Can't replay: a secret in it was hidden". |
+| A cut body (over the cap) or a binary body can't be replayed | Only part of it, or only its type and size, was kept |
+| `GET`, `HEAD` and `OPTIONS` replay on tap. Anything else asks first: "Send POST /orders again? It may repeat what it did." | Replaying a payment or an order does it twice |
+| A replay is a **new** record, marked as a replay, at the top of the list | The original stays, so the two responses can be compared |
+| No editing before sending (Later) | Editing turns devtools into an API client and widens what a tester can do on a shared device |
+| Replay exists only where devtools does | It's part of `sinew_devtools`, so the no-op build has none |
 
 #### Fault injection
 
@@ -207,6 +228,8 @@ Also Later:
 | `DevToolsGate` | `DevToolsGate.enabled: Boolean` (compile-time) | devtools |
 | `Redaction` | `Redaction(headers, fieldParts, exactFields, mask, maxBodyBytes)`, `Redaction.default`, `+ { … }` | devtools |
 | `NetworkRecorder` | `NetworkRecorder(capacity = 200, redaction)`, `.records`, `.clear()`, `.recordCacheServe(key, source, body)` | devtools |
+| `NetworkRecord` | `.replayable`, `.isReplay`, `.asText()`, `.asCurl()` | devtools |
+| `DevTools.replay` | `replay(record)`: sends the request again through the client that sent it, and records the result as a new record | devtools (no-op without devtools) |
 | `ExceptionRecorder` | `ExceptionRecorder(capacity = 50, dedupeWindow = 2 s)`, `.records`, `.clear()` | devtools |
 | `DevToolsCrashReporter` | `DevToolsCrashReporter(wrapping: CrashReporter)` | devtools |
 | `FaultRule`, `FaultRules` | `FaultRules.add(rule)`, `.remove(rule)`, `.clear()`, `.active` | devtools |
@@ -230,15 +253,17 @@ Also Later:
 2. `NetworkRecorder`, with tests:
    - the capacity drops the oldest record;
    - nothing unredacted is ever stored (assert on the stored record, not the screen);
-   - `clearUserData()` empties it.
+   - `clearUserData()` empties it;
+   - `replayable` is false when the URL, the request's own headers or its body lost a value, or the body was cut or binary, and true when only `Authorization` or `defaultHeaders` were masked;
+   - `asText()` and `asCurl()` contain only redacted values.
 3. `ExceptionRecorder` and `DevToolsCrashReporter`. Tests:
    - de-duplication within the window;
    - capacity;
    - the wrapped reporter still receives every report;
    - the uncaught-error hooks chain to the previous handlers.
 4. `FaultRules` in the network stack, tested: a forced 401 triggers exactly one refresh, a forced 503 on the refresh keeps the session, and a restart clears the rules.
-5. `HostOverride` and `debugExpireToken`, tested against the mock HTTP setup.
-6. `sinew_devtools_ui`, with the overlay and every built-in page, plus golden tests of the pages.
+5. `HostOverride`, `debugExpireToken` and `DevTools.replay`, tested against the mock HTTP setup. Replay: the request goes out through the same client with a fresh token (never one from the record), fault rules and the host override apply, and the result is a new record marked as a replay.
+6. `sinew_devtools_ui`, with the overlay and every built-in page, plus golden tests of the pages. The Network Monitor's Replay runs a `GET` on tap and asks first for any other method, and is disabled with its reason on a record that can't be replayed.
 7. Gating. A CI job builds the production release (and, on Flutter, profile) variant and checks that no devtools class or symbol is in the output. On Kotlin, an ABI check confirms `sinew-devtools-noop` matches the real API.
 
 **Done when**
@@ -260,6 +285,14 @@ Also Later:
 | The app has no router, or a custom one | The dashboard uses its own back stack, so it works the same. |
 | A production build by mistake depends on the real devtools | The CI gating job fails the build. |
 | The app's own uncaught-error handler is already set | Devtools chains to it. The app's handler still runs. |
+| A tester replays a login, an OTP check or a `?token=` call | Not offered: a secret in it was hidden, so the page says why instead. |
+| A tester replays `POST /orders` | Asked first, since it may place the order again. |
+| A replay while the session has expired | It goes through the auth layer like any request, so the refresh runs and the replay is sent with the new token. |
+| The record came from a client the app has since closed | Not replayable: the client that would add the token is gone. |
+| A body says it's JSON, or starts with `{` or `[`, but doesn't parse | Masked whole: it can't be walked, so nothing in it can be kept. |
+| A body without a content type | Kept as text only if it's valid UTF-8 without a NUL; otherwise type and size only. Multipart bodies are always type and size only, since they mix files and fields. |
+| A secret shorter than 16 characters on the Secure Store page (a PIN, a one-time code) | Only its length shows (`•••• (6 chars)`): its last 4 characters would give most of it away. |
+| A harmless name that contains a part (`shippingAddress` contains `pin`) | Masked. Matching by part errs toward hiding: a missed secret leaks, a hidden address only costs a tester a look elsewhere. An app can't narrow the parts, since the defaults are extend-only. |
 
 ## Implementation {#implementation}
 
@@ -345,6 +378,9 @@ As the base note. Kotlin specifics:
 | `DevToolsMenuItem` | `@Composable public fun DevToolsMenuItem(modifier: Modifier = Modifier)`; the no-op artifact has an empty one |
 | `DevTools.open` / `DevTools.close` | `public fun open()`, `public fun close()`, `public val isOpen: StateFlow<Boolean>` |
 | `DevTools.clearUserData` | `public fun clearUserData()` |
+| `Redaction` | `Redaction.Default + { headers += …; fieldParts += …; exactFields += …; maxBodyBytes = … }`, `withHeaders(names)`, `isSensitive(name)`, `isSensitiveHeader(name)`, `redactHeaders(Map<String, List<String>>)`, `redactUrl(url)`, `redactBody(bytes, contentType): RecordedBody`, `Redaction.maskSecret(value)`. The constructor is private, so the only way to new rules is extending the defaults. |
+| `RecordedBody` | `None`, `Text(text, size, truncated, masked)`, `Binary(contentType, size)`; `size` is the real body size in bytes, `masked` whether anything was hidden |
+| `DevTools.replay` | `public suspend fun replay(record: NetworkRecord)`, through the `HttpClient` the hooks were installed in; the no-op returns at once |
 
 ### 4. Build steps {#kotlin-4-build-steps}
 
@@ -450,6 +486,9 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 | `DevToolsGate.assertMatchesFlavor` | `static void assertMatchesFlavor()`: compares the define with Flutter's `appFlavor` |
 | `SinewDevTools` | `SinewDevTools({required Widget child, List<DevToolSection> sections = const [], BuildRibbon? ribbon, DevToolsLauncher launcher = const FloatingLauncher(), Redaction redaction = Redaction.standard, List<InspectableStore> stores = const [], String? changelog, List<String> hosts = const [], bool? showUncaughtErrors})` |
 | `DevTools.httpHooks`, `DevTools.clearUserData()` | as the base note |
+| `Redaction` | `Redaction.standard.extend(headers: …, fieldParts: …, exactFields: …, maxBodyBytes: …)`, `withHeaders(names)`, `isSensitive(name)`, `isSensitiveHeader(name)`, `redactHeaders(Map<String, List<String>>)`, `redactUrl(url)`, `redactBody(List<int>? bytes, String? contentType)`, `Redaction.maskSecret(value)`. The constructor is private and the rule sets are unmodifiable, so the only way to new rules is extending the defaults. |
+| `RecordedBody` | `sealed`: `NoBody`, `TextBody(text, size:, truncated:, masked:)`, `BinaryBody(contentType, size)` |
+| `DevTools.replay` | `static Future<void> replay(NetworkRecord record)`, through the `Dio` the hooks were installed in |
 
 ### 4. Build steps {#dart-4-build-steps}
 
