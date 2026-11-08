@@ -447,7 +447,7 @@ public class SessionTokenSource(
 |---|---|
 | `SinewTimeout` | For `GET`/`HEAD`, sets `requestTimeoutMillis` and `socketTimeoutMillis` to `readTimeout`. For other methods, `writeTimeout`. `connectTimeoutMillis` is always `connectTimeout`. |
 | `SinewHeaders` | Adds `Accept: application/json`, `Accept-Language: locale()`, and `defaultHeaders()`, read on every request |
-| `SinewFaults` / `SinewRecorder` | Call `hooks`. `SinewHttpHooks.None` makes them do nothing. |
+| `SinewHooks` | Devtools' hook point, installed **inside** `SinewAuth`: it applies a fault (`FaultDecision`: a delay, a dropped connection, or a status answered without the network through `HttpClientCall`'s `@InternalAPI` constructor), the host override, and `debugExpireToken`, then hands the raw exchange to `hooks.record`. With `SinewHttpHooks.None` it only serves `debugExpireToken`. |
 
 #### The guard and the error body {#kotlin-the-guard-and-the-error-body}
 
@@ -516,7 +516,8 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 |---|---|
 | `SinewHttp.client` | as above, returns `HttpClient` |
 | `SinewHttp.resetAuth` | `public suspend fun resetAuth(client: HttpClient)` |
-| `SinewHttpHooks` | `public interface SinewHttpHooks { public suspend fun fault(request: HttpRequestData): FaultDecision?; public fun record(exchange: HttpExchange) }`, `None` |
+| `SinewHttpHooks` | `public interface SinewHttpHooks { fun attached(client); fun detached(client); fun hostOverride(): String?; suspend fun fault(method: String, url: Url): FaultDecision?; fun record(exchange: HttpExchange) }`, every member defaulted, `None` |
+| `SinewHttp.debugExpireToken` | `public fun debugExpireToken(client: HttpClient)`: the next request that carries a token sends `sinew-devtools-expired`; `SinewAuth` itself is unchanged |
 | `processApiCall`, `processOptionalApiCall` | `public suspend fun <R>` as above |
 | `ErrorBodyReader` | `public fun interface ErrorBodyReader { public fun read(status: Int, body: String?): ErrorBody? }`, `Default` |
 | `retryWithBackoff`, `poll` | `public suspend fun <T>` |
@@ -579,7 +580,8 @@ Sinew offers **no option** to accept invalid certificates. A local-development s
 - **The request's own settings win**: a `timeout { }` on the call is kept, and a header it sets isn't overwritten. An own `Accept` also excludes JSON from `ContentNegotiation`, which would otherwise add it beside.
 - **`SinewRedirect` is Sinew's own**, because Ktor's `HttpRedirect` has no hop limit. It follows Ktor's rules (GET/HEAD only, no `https` → `http`), adds the 5-hop limit, drops `Cookie` as well as `Authorization` across hosts, counts another port as another host, and reuses the caller's request builder so a hop stays tied to the caller's cancellation.
 - **`SinewLog` replaces Ktor's `Logging`**: one line per exchange (`GET api.example.com/v1/orders → 200 (84 ms)`, or the failure's type), never a header, a body, a query string or an exception message. Nothing secret is read, so nothing needs redacting. The app passes an `HttpLogger`.
-- **`tokenSource` and devtools `hooks` arrive later**: `tokenSource` with `SinewAuth` (#19), `hooks` with DevTools (S6).
+- **`tokenSource` and devtools `hooks` arrive later**: `tokenSource` with `SinewAuth` (#19), `hooks` with DevTools (S6, `SinewHttp.client(…, hooks = …)`).
+- **One hooks plugin, not two.** Faults, the host override, token expiry and recording share one `SinewHooks` plugin inside `SinewAuth`: recording sits around the fault so a faked answer is recorded too, and both see the token the auth layer attached. A dropped connection is an internal `InjectedConnectionDrop` that `isNoConnectionFailure` recognizes, so it maps to `NoInternetConnectionException` on every engine.
 - **`SinewAuth` is an `on(Send)` client plugin**, installed inside `SinewRedirect`. The `SingleFlightRefresher` lives in the client's attributes, so `resetAuth(client)` finds it; `onClose` cancels its scope. Refreshes run in a `SupervisorJob` scope on `Dispatchers.Default`, injectable internally so tests run every interleaving on the test dispatcher.
 - **`resetAuth` cancels the running refresh and completes its waiters as `Rejected`** at once, rather than leaving them to wait for a backend that no longer matters.
 - **`FakeTokenSource` is in `sinew-testing`**: counts refreshes and clears, rotates `token-1` → `token-2`, and takes an `onRefresh` lambda to gate a refresh on a `CompletableDeferred`. Like a real source, a `Rejected` refresh ends its session.
@@ -621,8 +623,6 @@ abstract final class SinewHttp {
     final common = [
       SinewTimeoutInterceptor(config),                    // a total deadline per request, by method
       SinewHeadersInterceptor(config),                    // Accept, Accept-Language, default headers
-      SinewFaultInterceptor(hooks),                       // devtools; no-op by default
-      SinewRecorderInterceptor(hooks),                    // devtools; no-op by default
       if (config.logHttp) SinewLogInterceptor(),          // redacted
       ...extraInterceptors,
     ];
@@ -639,6 +639,15 @@ abstract final class SinewHttp {
   static void debugExpireToken(Dio dio);                  // devtools only
 }
 ```
+
+#### Devtools hooks {#dart-devtools-hooks}
+
+| Interceptor | Where | Does |
+|---|---|---|
+| `SinewRecorderInterceptor(dio, hooks:, defaults:)` | **before** `SinewAuthInterceptor` | Stamps the request, then hands each exchange to `hooks.record` from `onResponse` and `onError`. Dio runs every phase in list order, and the auth interceptor resolves a refreshed request from its `onError`, which skips every error interceptor after it; before it, the original 401 is recorded, and the replay is recorded on its own. |
+| `SinewHooksInterceptor(hooks:)` | **after** `SinewAuthInterceptor` | Applies `debugExpireToken`, the host override and a `FaultDecision`. A forced status is rejected with `callFollowingErrorInterceptor`, so the auth interceptor sees a forced 401 like a real one. A drop is a `connectionError`, so `NoInternetConnectionException`. |
+
+`SinewHttp.dio(…, hooks:)` installs both; with `SinewHttpHooks.none` they do nothing but `debugExpireToken`. Dio has no close callback, so devtools can't tell a closed `Dio` apart: replaying through one fails, and the failure is in the replay's record.
 
 #### The auth interceptor {#dart-the-auth-interceptor}
 

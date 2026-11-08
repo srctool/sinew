@@ -91,7 +91,7 @@ SinewDevTools(
 | **Local DB** | Group | `InspectableStore`s the app registers (one per DAO it wants visible) | Read-only. |
 | **Expire Access Token** | Action | the auth layer | The next request goes out with an invalid token, so the real 401 → refresh path runs. Non-production only. |
 | **Fault Injection** | Page | fault rules applied in the network stack | Rules live in memory only and are gone after a restart. See below. |
-| **API Host** | Page | the hosts listed in the app's config | Never compiled into a production flavor. The active host shows in the ribbon. |
+| **API Host** | Page | the hosts listed in the app's config | Never compiled into a production flavor. The active host shows in the ribbon. Only a listed host can be chosen; a remembered host the app no longer lists is forgotten. Requests for the client's own host move to the chosen base, keeping the path below the base path, after the auth layer attached the token. |
 | **Changelog** | Page | text the app supplies | |
 
 #### Redaction, when recording
@@ -166,7 +166,10 @@ FaultRule(method: String? = null, pathPattern: String, status: Int? = null, dela
 
 | Rule | Why |
 |---|---|
-| Rules apply **inside** the auth layer | A forced 401 runs the real refresh path. A forced 503 on the refresh call previews the "backend down, session kept" screen. |
+| Rules apply **inside** the auth layer | A forced 401 runs the real refresh path. A forced 503 on the refresh call previews the "backend down, session kept" screen; the refresh client needs the same hooks for that. |
+| A path pattern matches the **end** of the path, at a `/`, and `*` matches any run of characters | `/orders` catches `/v1/orders` without knowing the base path, and not `/v1/myorders` |
+| When several rules match, the most recently added wins | A tester narrows a broad rule by adding a specific one |
+| A dropped connection is classified as no connection, like a real one | The app shows its offline state, which is what a tester is checking |
 | Rules are in memory only, gone after a restart | A rule forgotten on a test device can't break the next day's session |
 | The ribbon shows "faults on" while any rule is active | A tester always knows the app is being lied to |
 
@@ -390,7 +393,9 @@ As the base note. Kotlin specifics:
 | `NetworkRecorder` | `NetworkRecorder(capacity = 200, redaction = Redaction.Default)`, `records: StateFlow<List<NetworkRecord>>` (newest first), `record(NetworkExchange): NetworkRecord`, `recordCacheServe(key, source, body, contentType, at)`, `clear()` |
 | `NetworkExchange` | the raw exchange the hooks hand over: method, URL, headers and bodies before redaction, status, `startedAt`, `duration`, `error`, `clientHeaders` (the client's `defaultHeaders` names), `isReplay` |
 | `ExceptionRecorder` | `ExceptionRecorder(capacity = 50, dedupeWindow = 2.seconds, redaction, clock: kotlin.time.Clock)`, `records: StateFlow<List<ExceptionRecord>>`, `record(error: Throwable, source = Reported)`, `clear()` |
-| `DevTools` | `object DevTools { network; exceptions; coroutineHandler; captureUncaughtErrors(); clearUserData() }`; `open()`/`close()`/`replay` arrive with the UI and hooks |
+| `DevTools` | `object DevTools { network; exceptions; faults; hosts; httpHooks; coroutineHandler; captureUncaughtErrors(); clearUserData(); canReplay(record); suspend replay(record); expireAccessToken() }`; `open()`/`close()` arrive with the UI |
+| `FaultRule`, `FaultRules` | `FaultRule(method, pathPattern, status, delay, drop, body)` (validated), `matches(method, path)`; `FaultRules.active: StateFlow`, `add`, `remove`, `clear`, `match` |
+| `HostOverride` | `hosts`, `current: StateFlow<String?>`, `suspend configure(hosts, store: KeyValueStore?)`, `suspend select(host?)` |
 | `DevTools.replay` | `public suspend fun replay(record: NetworkRecord)`, through the `HttpClient` the hooks were installed in; the no-op returns at once |
 
 ### 4. Build steps {#kotlin-4-build-steps}
@@ -501,7 +506,8 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 | `RecordedBody` | `sealed`: `NoBody`, `TextBody(text, size:, truncated:, masked:)`, `BinaryBody(contentType, size)` |
 | `NetworkRecorder` | `NetworkRecorder({int capacity = 200, Redaction? redaction})`, `ValueListenable<List<NetworkRecord>> records` (newest first, unmodifiable), `record(NetworkExchange)`, `recordCacheServe(key, source, {body, contentType, at})`, `clear()` |
 | `ExceptionRecorder` | `ExceptionRecorder({capacity = 50, dedupeWindow = Duration(seconds: 2), redaction, DateTime Function()? clock})`, `records`, `record(Object error, StackTrace? stack, {source})`, `clear()` |
-| `DevTools` | `abstract final class` with `static network`, `exceptions`, `captureUncaughtErrors()`, `clearUserData()` |
+| `DevTools` | `abstract final class` with `static network`, `exceptions`, `faults`, `hosts`, `httpHooks`, `captureUncaughtErrors()`, `clearUserData()`, `canReplay(record)`, `replay(record)`, `expireAccessToken()` |
+| `FaultRule`, `FaultRules`, `HostOverride` | as Kotlin, with `ValueListenable`s and `configure(hosts, {KeyValueStore? store})` |
 | Dependencies | `sinew_devtools` imports `sinew_exception` (`CrashReporter`) and `sinew_models` (`SinewException`) directly, so both are declared and in the graph: Dart needs a direct dependency for every import, where Kotlin reaches them through `sinew-network`'s `api` |
 | `DevTools.replay` | `static Future<void> replay(NetworkRecord record)`, through the `Dio` the hooks were installed in |
 
