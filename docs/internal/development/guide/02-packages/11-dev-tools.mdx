@@ -127,6 +127,13 @@ Redaction(
 | `NetworkRecorder(capacity = 200)` | method, URL, status, duration, redacted headers and bodies, error type and code, a "served from cache" marker, the client that sent it, whether it can be replayed, and whether it is a replay | on sign-out, on "Clear" in the page, on app restart |
 | `ExceptionRecorder(capacity = 50, dedupeWindow = 2 s)` | time, exception type, code, message key or server text, stack trace, repeat count | on "Clear", on app restart |
 
+| Recording rule | Why |
+|---|---|
+| A repeat is merged when its type, code, message and source match a row last seen within the window, measured from that row's **last** occurrence, and the merged row moves to the top | A retry loop failing every second stays one row with a rising count, instead of filling the log |
+| An exception's message and stack trace (with its cause) go through `Redaction.redactText`: `Bearer` and `Basic` credentials, and `name=value` and JSON `"name": value` pairs whose names are sensitive | A plain error's message often carries the URL it failed on, `?token=…` included |
+| The network recorder takes the exchange **before** redaction and keeps only the redacted record | One place redacts, so no caller can store a raw value by mistake |
+| A recording failure never stops the app's own handlers or the real crash reporter | Devtools must never change what the app does |
+
 The recorders keep data in memory only and never write it to disk. The app's sign-out use case calls `SinewDevTools.clearUserData()`. In a build without devtools, that call does nothing.
 
 `DevToolsCrashReporter` wraps the app's real reporter: `CrashReporter.install(DevToolsCrashReporter(wrapping = realReporter))`. Every report goes to the Exception Log and then on to the real reporter, unchanged.
@@ -380,6 +387,10 @@ As the base note. Kotlin specifics:
 | `DevTools.clearUserData` | `public fun clearUserData()` |
 | `Redaction` | `Redaction.Default + { headers += …; fieldParts += …; exactFields += …; maxBodyBytes = … }`, `withHeaders(names)`, `isSensitive(name)`, `isSensitiveHeader(name)`, `redactHeaders(Map<String, List<String>>)`, `redactUrl(url)`, `redactBody(bytes, contentType): RecordedBody`, `Redaction.maskSecret(value)`. The constructor is private, so the only way to new rules is extending the defaults. |
 | `RecordedBody` | `None`, `Text(text, size, truncated, masked)`, `Binary(contentType, size)`; `size` is the real body size in bytes, `masked` whether anything was hidden |
+| `NetworkRecorder` | `NetworkRecorder(capacity = 200, redaction = Redaction.Default)`, `records: StateFlow<List<NetworkRecord>>` (newest first), `record(NetworkExchange): NetworkRecord`, `recordCacheServe(key, source, body, contentType, at)`, `clear()` |
+| `NetworkExchange` | the raw exchange the hooks hand over: method, URL, headers and bodies before redaction, status, `startedAt`, `duration`, `error`, `clientHeaders` (the client's `defaultHeaders` names), `isReplay` |
+| `ExceptionRecorder` | `ExceptionRecorder(capacity = 50, dedupeWindow = 2.seconds, redaction, clock: kotlin.time.Clock)`, `records: StateFlow<List<ExceptionRecord>>`, `record(error: Throwable, source = Reported)`, `clear()` |
+| `DevTools` | `object DevTools { network; exceptions; coroutineHandler; captureUncaughtErrors(); clearUserData() }`; `open()`/`close()`/`replay` arrive with the UI and hooks |
 | `DevTools.replay` | `public suspend fun replay(record: NetworkRecord)`, through the `HttpClient` the hooks were installed in; the no-op returns at once |
 
 ### 4. Build steps {#kotlin-4-build-steps}
@@ -488,6 +499,10 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 | `DevTools.httpHooks`, `DevTools.clearUserData()` | as the base note |
 | `Redaction` | `Redaction.standard.extend(headers: …, fieldParts: …, exactFields: …, maxBodyBytes: …)`, `withHeaders(names)`, `isSensitive(name)`, `isSensitiveHeader(name)`, `redactHeaders(Map<String, List<String>>)`, `redactUrl(url)`, `redactBody(List<int>? bytes, String? contentType)`, `Redaction.maskSecret(value)`. The constructor is private and the rule sets are unmodifiable, so the only way to new rules is extending the defaults. |
 | `RecordedBody` | `sealed`: `NoBody`, `TextBody(text, size:, truncated:, masked:)`, `BinaryBody(contentType, size)` |
+| `NetworkRecorder` | `NetworkRecorder({int capacity = 200, Redaction? redaction})`, `ValueListenable<List<NetworkRecord>> records` (newest first, unmodifiable), `record(NetworkExchange)`, `recordCacheServe(key, source, {body, contentType, at})`, `clear()` |
+| `ExceptionRecorder` | `ExceptionRecorder({capacity = 50, dedupeWindow = Duration(seconds: 2), redaction, DateTime Function()? clock})`, `records`, `record(Object error, StackTrace? stack, {source})`, `clear()` |
+| `DevTools` | `abstract final class` with `static network`, `exceptions`, `captureUncaughtErrors()`, `clearUserData()` |
+| Dependencies | `sinew_devtools` imports `sinew_exception` (`CrashReporter`) and `sinew_models` (`SinewException`) directly, so both are declared and in the graph: Dart needs a direct dependency for every import, where Kotlin reaches them through `sinew-network`'s `api` |
 | `DevTools.replay` | `static Future<void> replay(NetworkRecord record)`, through the `Dio` the hooks were installed in |
 
 ### 4. Build steps {#dart-4-build-steps}
