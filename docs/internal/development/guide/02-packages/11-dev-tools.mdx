@@ -52,7 +52,7 @@ flowchart LR
 | Package | Holds | Why separate |
 |---|---|---|
 | `sinew_devtools` | the entry contract, recorders, redaction, fault rules, host override | Capture works without the UI, for example to attach the last requests to a bug report. It has no UI toolkit dependency. |
-| `sinew_devtools_ui` | the floating button, the dashboard, the built-in inspector pages, on each platform's Material toolkit | Developer UI isn't brand UI, so it doesn't depend on Camouflage. It uses its own theme and back stack, never the app's. |
+| `sinew_devtools_ui` | the entry contract (its pages are UI), the floating button, the dashboard, the built-in inspector pages, on each platform's Material toolkit | Developer UI isn't brand UI, so it doesn't depend on Camouflage. It uses its own theme and back stack, never the app's. |
 | `sinew-devtools-noop` (Kotlin) | the same public API as empty stubs | Release builds of Android depend on it instead, so no devtools code exists there |
 
 #### The entry contract
@@ -181,6 +181,10 @@ FaultRule(method: String? = null, pathPattern: String, status: Int? = null, dela
 | Its position is remembered in devtools' own key-value namespace (`sinew.devtools.*`) | The app's preferences stay untouched |
 | The dashboard has its own theme and its own back stack, shown above the app | It works the same in every app, whatever router or theme the app uses, and never pushes a route into the app's navigation |
 | The button hides while the dashboard is open | |
+| `SinewDevTools` takes a `preferences` key-value store: devtools' own, such as one named `sinew.devtools` | The button's position and the chosen API host are remembered there, never in the app's store; without one, nothing is remembered |
+| System back walks the dashboard's own stack, and on its first screen closes the dashboard | Back never leaves the app from inside devtools |
+| An uncaught error can pop up a card over the app (`showUncaughtErrors`); it's always recorded either way | A tester sees a crash that the app swallowed |
+| The dashboard's theme follows the system's light or dark setting | Tests and goldens pin it, so images don't depend on the machine |
 
 #### The launcher: where the entry point goes
 
@@ -382,7 +386,10 @@ As the base note. Kotlin specifics:
 
 | Name | Kotlin |
 |---|---|
-| `SinewDevTools` | `@Composable public fun SinewDevTools(sections: List<DevToolSection> = emptyList(), ribbon: BuildRibbon? = null, launcher: DevToolsLauncher = FloatingLauncher(), redaction: Redaction = Redaction.Default, stores: List<InspectableStore> = emptyList(), changelog: String? = null, hosts: List<String> = emptyList(), showUncaughtErrors: Boolean = …, content: @Composable () -> Unit)` |
+| Entry contract | in `sinew-devtools-ui`, since a page's content is `@Composable`: `DevToolSection`, `DevToolEntry.Page`/`Group`/`Toggle`/`Action`, `BuildRibbon`; `DevTools.open()`/`close()`/`isOpen` stay in `sinew-devtools` |
+| Back | `NavigationBackHandler` (navigationevent-compose), installed only when the app provides a `LocalNavigationEventDispatcherOwner`: an app on an older `androidx.activity` gets the top bar's Back only, never a crash |
+| Tests | the shared Compose UI tests run on the JVM, iOS and wasm; Android runs a Robolectric suite (`androidHostTest`), since a shared Compose test needs a window there. Roborazzi screenshots on the desktop and under Robolectric, with references per OS under `screenshots/<os>/<platform>/`: a test records what its OS lacks, and CI uploads the Linux set |
+| `SinewDevTools` | `@Composable public fun SinewDevTools(sections: List<DevToolSection> = emptyList(), ribbon: BuildRibbon? = null, launcher: DevToolsLauncher = FloatingLauncher(), redaction: Redaction = Redaction.Default, stores: List<InspectableStore> = emptyList(), changelog: String? = null, hosts: List<String> = emptyList(), showUncaughtErrors: Boolean = false, preferences: KeyValueStore? = null, content: @Composable () -> Unit)`: common code can't tell a debug build, so the card is off unless the app turns it on |
 | `DevTools.httpHooks` | `public val httpHooks: SinewHttpHooks` |
 | `DevToolsLauncher` | `public sealed interface DevToolsLauncher`; `FloatingLauncher(initialPosition: Alignment = Alignment.BottomEnd)`, `MenuLauncher`, `CustomLauncher` |
 | `DevToolsMenuItem` | `@Composable public fun DevToolsMenuItem(modifier: Modifier = Modifier)`; the no-op artifact has an empty one |
@@ -470,6 +477,8 @@ Because `DevToolsGate.enabled` is `const`, the compiler removes the `true` branc
 
 #### The overlay {#dart-the-overlay}
 
+`SinewDevTools` sits above the app's `MaterialApp`, so it brings its own `Directionality` and `MediaQuery`; the dashboard is a `MaterialApp` of its own. Golden references live per OS under `test/goldens/<os>/`, through a comparator in `flutter_test_config.dart` that records what its OS lacks; CI uploads the Linux set.
+
 `SinewDevTools` puts its floating button and dashboard in an `Overlay` above the app, with its own `Navigator` and its own `Theme` (Material 3, independent of the app's theme). It never uses the app's router or `BuildContext` navigation.
 
 #### The launcher {#dart-the-launcher}
@@ -500,7 +509,7 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 | `DevToolsMenuItem` | `const DevToolsMenuItem({Key? key})`, a `ListTile` that opens the dashboard |
 | `DevTools.open` / `DevTools.close` | `static void open()`, `static void close()`, `static ValueListenable<bool> isOpen` |
 | `DevToolsGate.assertMatchesFlavor` | `static void assertMatchesFlavor()`: compares the define with Flutter's `appFlavor` |
-| `SinewDevTools` | `SinewDevTools({required Widget child, List<DevToolSection> sections = const [], BuildRibbon? ribbon, DevToolsLauncher launcher = const FloatingLauncher(), Redaction redaction = Redaction.standard, List<InspectableStore> stores = const [], String? changelog, List<String> hosts = const [], bool? showUncaughtErrors})` |
+| `SinewDevTools` | `SinewDevTools({required Widget child, List<DevToolSection> sections = const [], BuildRibbon? ribbon, DevToolsLauncher launcher = const FloatingLauncher(), Redaction redaction = Redaction.standard, List<InspectableStore> stores = const [], String? changelog, List<String> hosts = const [], bool? showUncaughtErrors, KeyValueStore? preferences})`: `showUncaughtErrors` `null` means on except in debug |
 | `DevTools.httpHooks`, `DevTools.clearUserData()` | as the base note |
 | `Redaction` | `Redaction.standard.extend(headers: …, fieldParts: …, exactFields: …, maxBodyBytes: …)`, `withHeaders(names)`, `isSensitive(name)`, `isSensitiveHeader(name)`, `redactHeaders(Map<String, List<String>>)`, `redactUrl(url)`, `redactBody(List<int>? bytes, String? contentType)`, `Redaction.maskSecret(value)`. The constructor is private and the rule sets are unmodifiable, so the only way to new rules is extending the defaults. |
 | `RecordedBody` | `sealed`: `NoBody`, `TextBody(text, size:, truncated:, masked:)`, `BinaryBody(contentType, size)` |
