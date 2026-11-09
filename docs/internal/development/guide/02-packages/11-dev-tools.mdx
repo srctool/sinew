@@ -328,7 +328,9 @@ This note builds the base devtools on Kotlin. Capture lives in `commonMain`, the
 
 The no-op module has no devtools logic, but its API still names types from other modules (`SinewHttpHooks` from network, `InspectableStore` from storage, `CrashReporter` from exception, `@Composable` from the Compose runtime). So it depends on `sinew-network`, `sinew-storage`, `sinew-exception` and `compose-runtime`, exactly as the real modules expose them.
 
-**API parity:** CI merges the ABI dumps of `sinew-devtools` and `sinew-devtools-ui` and compares them with `sinew-devtools-noop`'s dump. They must be identical.
+**API parity:** Kotlin's built-in ABI validation (`abiValidation()`) is on for the three modules, with reference dumps in each module's `api/`. `checkDevtoolsNoopAbi`, in CI, compares the no-op's JVM, Android and klib dumps with `sinew-devtools`' and `sinew-devtools-ui`'s together, line by line. It ignores the header comments that name the library and what the Compose compiler generates (`ComposableSingletons` lambda holders, `$stable`/`$stableprop`), since the no-op's capture classes are built with Compose and the real `sinew-devtools` isn't. The no-op's stubs fail safe where a value must come back: every name is sensitive, no body is kept, nothing is recorded.
+
+The sample's four entry points wrap the app in `SinewDevTools`; CI builds the Android production release (the no-op) beside staging (the real one), so the same app code compiles against both.
 
 #### Wiring: only in the platform entry points {#kotlin-wiring-only-in-the-platform-entry-points}
 
@@ -460,6 +462,8 @@ abstract final class DevToolsGate {
 | release or profile, no flavor defined | false | `''` | **false** (fails safe) |
 
 A profile build is release-signed and installable, so `kDebugMode` alone is never the gate.
+
+`assertMatchesFlavor()` throws only when the define names **another** flavor than `appFlavor`. A missing define passes, since devtools are then off and that fails safe (throwing would crash a production build that simply lacks the define), and so does an app without flavors. `SinewDevTools` and `DevToolsMenuItem` also check `DevToolsGate.enabled` themselves, so a `main` that forgot the gate still ships only the app in production. Checked by hand for #46: a release web build of the example with `SINEW_FLAVOR=production` contains no marker; with `staging` it does.
 
 #### Using it {#dart-using-it}
 
