@@ -540,7 +540,7 @@ EXIF, camera and map playgrounds are separate packages. Flutter links every plug
 
 | Case | Decided behavior |
 |---|---|
-| `DevToolsGate.enabled` read at runtime from a non-const place | It can't be: it's a `static const`. A wrapper that isn't `const` would defeat tree-shaking, so code review and the CI check both catch it. |
+| `DevToolsGate.enabled` read at runtime from a non-const place | It can't be: it's a `static const`. A `static final` in its place defeats tree-shaking in the AOT builds (Android, iOS), and the CI check catches it there. The web compilers still fold it, so web builds stay clean. |
 | The app forgets `--dart-define=SINEW_FLAVOR` in a staging release | Devtools are off. A forgotten setting fails safe. |
 | The app's `MaterialApp` theme | The dashboard has its own `Theme`, so the app's theme never affects it. |
 
