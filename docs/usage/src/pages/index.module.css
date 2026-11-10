@@ -7,7 +7,10 @@
   padding: 4rem 0;
   text-align: center;
   position: relative;
-  overflow: hidden;
+  /* The language menu drops below the hero. Infima's .hero sets overflow: hidden, which clipped it, and the
+     sections below painted over what was left, so the hero lets it out and sits above them. */
+  overflow: visible !important;
+  z-index: 2;
 }
 
 @media screen and (max-width: 996px) {

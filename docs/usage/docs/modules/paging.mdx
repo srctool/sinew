@@ -1,0 +1,64 @@
+---
+title: Paging
+sidebar_label: Paging
+sidebar_position: 4
+---
+
+# Paging
+
+`sinew-paging` / `sinew_paging`: the paging rules in one place.
+
+A list needs the same rules in every screen: load the first page once per query, load more only when there is a next page, retry the load that failed, and let a refresh replace what is running. `Pager` holds those rules and holds no UI state: it reads the current state and writes the next one.
+
+## What it holds
+
+- Four strategies for four backends: `Pager.offset`, `Pager.offsetByTotal`, `Pager.cursor` and `Pager.lastItem`.
+- `PagingState` with `canLoadMore` and `retryType`, so the UI never decides "may I load more" itself.
+- `LoadType`: `Initial`, `Refresh` and `More`. It stays set after a load, so the UI can tell a first-page failure from a next-page failure.
+
+## Load every page
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Paging.kt#pager
+suspend fun loadAll(fetch: suspend (page: Int, query: String) -> Result<PagingDomain<Order>>): List<Order> {
+    val pager = Pager.offset<Order>(itemKey = { it.id }, fetch = fetch)
+    var state = PagingState<Order>()
+
+    pager.load(LoadType.Initial, state) { state = it }
+    while (state.canLoadMore) pager.load(LoadType.More, state) { state = it }
+    return state.view.dataOrNull?.items.orEmpty()
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_paging/example/main.dart#pager
+final pager = Pager<String>.offset(fetch);
+var state = const PagingState<String>();
+
+// The pager reads the current state and writes the next one through `update`.
+await pager.load(LoadType.initial, state, update: (next) => state = next);
+print('first page: ${state.view.dataOrNull?.items}');
+
+while (state.canLoadMore) {
+  await pager.load(LoadType.more, state, update: (next) => state = next);
+}
+print('all pages: ${state.view.dataOrNull?.items}');
+```
+
+</TabItem>
+</LangTabs>
+
+In a real page, the `update` callback writes the state your view model or notifier owns, as in the [quick start](/docs/getting-started/quick-start).
+
+## Good to know
+
+- `Initial` runs at most once per query. A new search is an `Initial` with the new query.
+- A newer load, or a refresh, supersedes whatever is running; a stale result is dropped.
+- A refresh drops the items, so the list shows its skeleton.
+- A local list pages the same way: see `pagedQuery` in [Storage](/docs/modules/storage).

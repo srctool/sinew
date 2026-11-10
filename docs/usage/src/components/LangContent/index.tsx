@@ -7,9 +7,10 @@ import {getPreferredLang, Lang} from '@site/src/components/LanguageSwitcher';
  * - Defaults to 'kotlin' during SSR/first render if no preference is saved
  */
 const UseLang: React.FC<{only: Lang; children: React.ReactNode}> = ({only, children}) => {
-  const [lang, setLang] = useState<Lang>(getPreferredLang());
+  const [lang, setLang] = useState<Lang>('kotlin');
 
   useEffect(() => {
+    setLang(getPreferredLang());
     const handler = (e: any) => {
       const next = e?.detail?.lang as Lang | undefined;
       if (next && next !== lang) setLang(next);

@@ -1,0 +1,53 @@
+---
+title: DevTools
+sidebar_label: DevTools
+sidebar_position: 11
+---
+
+# DevTools
+
+`sinew-devtools`, `sinew-devtools-ui` and `sinew-devtools-noop` on Kotlin; `sinew_devtools` and `sinew_devtools_ui` on Flutter.
+
+What a tester needs to see and break the app: every request and exception recorded with its secrets already hidden, faults that force a status or drop a connection, and a host that can be switched. **A production build contains none of it.**
+
+## What it holds
+
+- **Network Monitor**, with Copy, Copy as cURL and Replay, and an **Exception Log**, both redacted and bounded in memory.
+- **Redaction**: tokens, passwords and one-time codes in headers, URLs and bodies are hidden before anything is stored. You can extend the rules; you can't remove the defaults.
+- **Fault injection** and an **API host** switch, applied inside the auth layer, so a forced 401 runs the real refresh.
+- Inspectors for your key-value and secure stores (secrets masked, never copyable), and **your own sections**.
+
+## Add it to the app
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/shared/src/jvmMain/kotlin/com/srctool/sinew/sample/Main.kt#devtools-entry
+fun main() = application {
+    Window(onCloseRequest = ::exitApplication, title = "Sinew") {
+        SinewDevTools(ribbon = BuildRibbon("Sinew sample")) { SampleApp() }   // sinew.devtools picks real or no-op
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/example/lib/main.dart#devtools-entry
+void main() {
+  DevToolsGate.assertMatchesFlavor();
+  const app = ProviderScope(child: SinewExampleApp());
+  runApp(
+    DevToolsGate.enabled
+        ? const SinewDevTools(ribbon: BuildRibbon('Sinew example'), child: app)
+        : app,
+  );
+}
+```
+
+</TabItem>
+</LangTabs>
+
+See [the production guide](/docs/guides/production-setup) for how a production build stays clean, and how to prove it.

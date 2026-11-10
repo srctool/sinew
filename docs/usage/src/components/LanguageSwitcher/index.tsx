@@ -110,9 +110,10 @@ const LANG_COLORS: Record<Lang, string> = {
 
 // A small button group to toggle Kotlin/Dart
 const LanguageSwitcher: React.FC<{compact?: boolean}> = ({compact = false}) => {
-  const [lang, setLang] = useState<Lang>(getInitialLang());
+  const [lang, setLang] = useState<Lang>('kotlin');
 
   useEffect(() => {
+    setLang(getInitialLang());
     // Ensure palette matches current lang on mount and when external changes occur
     applyPrimaryPaletteForLang(lang);
     const handler = (e: any) => {

@@ -1,0 +1,170 @@
+---
+title: Quick start
+sidebar_label: Quick start
+---
+
+# Quick start
+
+A list that loads its first page, loads more at the end, shows a retry when a page fails, and refreshes. This is the sample app, which runs on every platform: its backend is in memory, and its second page fails once, so you see every state.
+
+The page sends **events** (it opened, the list neared its end, retry was tapped); a pure function turns each event into the **work** to run; the work updates the **state**. The page only renders state.
+
+## 1. The view model
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/shared/src/commonMain/kotlin/com/srctool/sinew/sample/OrderListViewModel.kt#view-model
+class OrderListViewModel(backend: OrderBackend) :
+    EventActionViewModel<OrderListState, OrderListEvent, LoadOrders, Nothing>(OrderListState()) {
+    private val pager = Pager.offset<Order>(itemKey = { it.id }) { page, _ -> backend.orders(page) }
+
+    override fun mapEventToAction(event: OrderListEvent): LoadOrders? = when (event) {
+        OrderListEvent.Opened -> LoadOrders(LoadType.Initial)                // the pager runs Initial once per query
+        OrderListEvent.EndReached -> if (currentState.orders.canLoadMore) LoadOrders(LoadType.More) else null
+        OrderListEvent.RetryTapped -> LoadOrders(currentState.orders.retryType)
+        OrderListEvent.Refreshed -> LoadOrders(LoadType.Refresh)
+    }
+
+    override suspend fun onAction(action: LoadOrders) {
+        pager.load(action.type, currentState.orders) { next -> setState { copy(orders = next) } }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/example/lib/orders/order_list_notifier.dart#notifier
+/// Turns the page's events into loads, on Sinew's Riverpod mixins.
+class OrderList extends Notifier<OrderListState>
+    with
+        StateEffectNotifier<OrderListState, Never>,
+        EventActionNotifier<OrderListState, OrderListEvent, LoadOrders, Never> {
+  late final Pager<Order> _pager = Pager.offset(
+    (page, _) => ref.read(orderBackendProvider).orders(page),
+    itemKey: (order) => order.id,
+  );
+
+  @override
+  OrderListState build() => const OrderListState();
+
+  @override
+  LoadOrders? mapEventToAction(OrderListEvent event) => switch (event) {
+    // The pager runs initial once per query.
+    OrderListOpened() => const LoadOrders(LoadType.initial),
+    OrderListEndReached() =>
+      state.orders.canLoadMore ? const LoadOrders(LoadType.more) : null,
+    OrderListRetryTapped() => LoadOrders(state.orders.retryType),
+    OrderListRefreshed() => const LoadOrders(LoadType.refresh),
+  };
+
+  @override
+  Future<void> onAction(LoadOrders action) => _pager.load(
+    action.type,
+    state.orders,
+    update: (next) => setState((_) => OrderListState(orders: next)),
+  );
+}
+```
+
+</TabItem>
+</LangTabs>
+
+- `Pager.offset` holds the paging rules: the first page loads once per query, `More` only starts when there is a next page, and a refresh replaces whatever is running.
+- `mapEventToAction` is **pure**: it reads the state and returns the work, or `null` for none right now. Every "should this run" decision is in one testable function.
+- `PagingState` stays set after a load, so retry knows what to repeat (`retryType`).
+
+## 2. The screen
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/shared/src/commonMain/kotlin/com/srctool/sinew/sample/OrderListScreen.kt#screen
+@Composable
+fun OrderListScreen(viewModel: OrderListViewModel) {
+    val state by viewModel.state.collectAsState()
+    LaunchedEffect(viewModel) { viewModel.onEvent(OrderListEvent.Opened) }
+    Column(Modifier.fillMaxSize().background(Camouflage.colors.surface).safeDrawingPadding()) {
+        CamoButton("Refresh", onClick = { viewModel.onEvent(OrderListEvent.Refreshed) }, modifier = Modifier.padding(8.dp))
+        CamoPagedList(
+            state = state.orders.toCamo(),
+            itemKey = { it.id },
+            onLoadMore = { viewModel.onEvent(OrderListEvent.EndReached) },
+            onRetry = { viewModel.onEvent(OrderListEvent.RetryTapped) },
+            onRefresh = { viewModel.onEvent(OrderListEvent.Refreshed) },
+            item = { order, _ -> CamoListItem(order.title, supporting = order.status) },
+            modifier = Modifier.weight(1f).testTag("orders"),
+        )
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/example/lib/orders/order_list_screen.dart#screen
+Widget build(BuildContext context) {
+  final state = ref.watch(orderListProvider);
+  return ColoredBox(
+    color: Camouflage.colorsOf(context).surface,
+    child: SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: CamoButton(
+              text: 'Refresh',
+              onPressed: () => _onEvent(const OrderListRefreshed()),
+            ),
+          ),
+          Expanded(
+            child: CamoPagedList<Order>(
+              state: state.orders.toCamoOf(context),
+              itemKey: (order) => order.id,
+              onLoadMore: () => _onEvent(const OrderListEndReached()),
+              onRetry: () => _onEvent(const OrderListRetryTapped()),
+              onRefresh: () async => _onEvent(const OrderListRefreshed()),
+              itemBuilder: (context, order, _) => CamoListItem(
+                headline: order.title,
+                supporting: order.status,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+```
+
+</TabItem>
+</LangTabs>
+
+`toCamo` (`toCamoOf` on Flutter) turns the paging state into what Camouflage's `CamoPagedList` shows: the skeleton, the items, load more, retry, refresh and the end of the list. See [paging with Camouflage](/docs/guides/paging-with-camouflage).
+
+## Run it
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```sh
+./gradlew :sample:shared:run                      # desktop
+./gradlew :sample:androidApp:installStagingDebug  # Android
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```sh
+cd example
+flutter run
+```
+
+</TabItem>
+</LangTabs>

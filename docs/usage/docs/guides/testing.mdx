@@ -1,0 +1,82 @@
+---
+title: Testing with Sinew
+sidebar_label: Testing with Sinew
+sidebar_position: 1
+---
+
+# Testing with Sinew
+
+`sinew-testing` / `sinew_testing` has a fake for every Sinew interface. These tests run on the JVM or the Dart VM with no device, no network and no platform plugin.
+
+## Test a call against a mock backend
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/test/kotlin/com/srctool/sinew/docs/Testing.kt#mock-http
+@Test
+fun ordersLoad() = runTest {
+    val http = mockHttp {
+        on(HttpMethod.Get, "/v1/orders").respond(200, """{"data":{"id":7,"title":"Two coffees"}}""")
+    }
+    http.client.get("orders")
+    assertEquals("/v1/orders", http.requests.single().url.encodedPath)
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+test('orders load', () async {
+  final http = mockHttp((routes) => routes
+      .on('GET', '/v1/orders').respond(200, body: fixture('orders_page.json')));
+  final result = await OrderRepository(OrderApi(http.dio)).page(1);
+  expect(http.requests.single.uri.path, '/v1/orders');
+});
+```
+
+</TabItem>
+</LangTabs>
+
+A route answers with its responses in order, repeating the last one. A request no route matches fails the test and names it. The mock engine runs on the test's clock on Kotlin, so a delay is virtual time and the client's deadlines fire as they would.
+
+## Make storage and tokens fail
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/test/kotlin/com/srctool/sinew/docs/Testing.kt#fakes
+@Test
+fun aFailedReadIsAStorageFailure() = runTest {
+    val prefs = FakeKeyValueStore()
+    prefs.failNextRead()                      // the next read throws, once
+    val tokens = FakeTokenSource()            // counts refreshes and rotates the token
+    assertEquals("token-1", tokens.accessToken())
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+final prefs = FakeKeyValueStore();
+prefs.failNextRead();                  // the next read throws, once
+final tokens = FakeTokenSource();      // counts refreshes and rotates the token
+```
+
+</TabItem>
+</LangTabs>
+
+The fakes fail the way the real ones fail, so through `processStorageCall` a scripted failure becomes `StorageReadException`, `StorageWriteException` or `StorageFullException`.
+
+## Test every state of a list
+
+`ControlledFetch` holds a pager's calls open until the test answers them, by index, in call order. A call whose coroutine was cancelled (a superseded load) is recorded as cancelled, and `assertAllCompleted` fails the test if one was left pending.
+
+## Good to know
+
+- A fake cipher stores a readable `enc(...)` form with no cryptography. It is for code that only stores and loads values; crypto tests use the real cipher.
+- `sinew-testing` appears only in test configurations, checked by the dependency-graph check.

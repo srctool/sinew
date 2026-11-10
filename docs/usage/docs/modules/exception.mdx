@@ -1,0 +1,113 @@
+---
+title: Exception
+sidebar_label: Exception
+sidebar_position: 2
+---
+
+# Exception
+
+`sinew-exception` / `sinew_exception`: a coded error model.
+
+## What it holds
+
+- Built-in types for connectivity, HTTP statuses, parsing, storage and polling: `NoInternetConnectionException`, `ValidationException`, `UnauthorizedException`, `NotFoundException`, `ServerException`, `ParseException`, `StorageFullException` and more. Each has a short **type code**.
+- `processCall` and `processUseCase`: guards that turn whatever a block throws into a `Result`.
+- `ExceptionHandler`: one rule in a guard's list, "is this a timeout?" and "make this exception for this call".
+- `CrashReporter`: where bugs (unexpected and parse failures) are reported.
+- `Localizer` and `displayMessage`: the text a page shows.
+
+## Guard a call
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Errors.kt#guard
+suspend fun loadOrder(api: OrderApi): Result<Order> = processCall(
+    module = "ORD",
+    function = "load",
+    layer = ExceptionLayer.Repository,
+    handlers = listOf(
+        ExceptionHandler(
+            matches = { it is SerializationException },
+            transform = { ParseException("ORD", ExceptionLayer.Repository, "load", cause = it) },
+        ),
+    ),
+) { api.order(7) }
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_exception/example/main.dart#guard
+// A guard turns whatever a call throws into a typed failure, once, where it
+// happened. The handlers say which errors mean what for this layer.
+final result = await processCall<String>(
+  'ORD',
+  'load',
+  ExceptionLayer.repository,
+  [
+    ExceptionHandler(
+      (error) => error is FormatException,
+      (error) =>
+          const ParseException('ORD', ExceptionLayer.repository, 'load'),
+    ),
+  ],
+  loadOrder,
+);
+```
+
+</TabItem>
+</LangTabs>
+
+A `SinewException` from a lower layer passes through unchanged. Anything else goes to the first matching handler, or becomes an `UnexpectedException`. Unexpected and parse failures are reported. On Kotlin, cancellation is never a failure: it propagates.
+
+## Show an error
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Errors.kt#display
+fun errorText(error: SinewException, localizer: Localizer?): String = error.displayMessage(localizer)
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+Text(error.displayMessage(localizer));
+```
+
+</TabItem>
+</LangTabs>
+
+The text is server text unchanged, or a local message key resolved by the `Localizer`, falling back to English (never the raw key). The code always ends the text, for example `You're offline. (ORD-R-load-NIC)`.
+
+## Report bugs
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Errors.kt#crash-reporter
+fun installReporter() {
+    CrashReporter.install(CrashReporter { error -> println("reported ${error.code}") })
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+CrashReporter.install(MyReporter()); // once, at the composition root
+```
+
+</TabItem>
+</LangTabs>
+
+## Good to know
+
+- The codes and the `sinew.` key prefix are reserved. Your own exceptions use other codes and keys.
+- Validation field messages are shown beside their fields, without a code.

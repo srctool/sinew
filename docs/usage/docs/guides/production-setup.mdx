@@ -1,0 +1,88 @@
+---
+title: A production setup
+sidebar_label: A production setup
+sidebar_position: 2
+---
+
+# A production setup
+
+Developer tools are for staging and debug builds. This guide shows how a build chooses, and how to prove a production build has no devtools code.
+
+## Choose per build
+
+<LangTabs>
+<TabItem value="kotlin">
+
+On Android, give each variant one artifact:
+
+```kotlin
+// sample: kotlin-lib/sample/androidApp/build.gradle.kts#devtools-variants
+"productionDebugImplementation"(projects.sinewDevtoolsUi)
+"stagingImplementation"(projects.sinewDevtoolsUi)
+"productionReleaseImplementation"(projects.sinewDevtoolsNoop)
+```
+
+Then wrap the app in the platform entry point, never in shared code:
+
+```kotlin
+// sample: kotlin-lib/sample/shared/src/jvmMain/kotlin/com/srctool/sinew/sample/Main.kt#devtools-entry
+fun main() = application {
+    Window(onCloseRequest = ::exitApplication, title = "Sinew") {
+        SinewDevTools(ribbon = BuildRibbon("Sinew sample")) { SampleApp() }   // sinew.devtools picks real or no-op
+    }
+}
+```
+
+The no-op artifact has the same API with nothing behind it, so this code compiles against both, and `SinewDevTools` only calls its content.
+
+</TabItem>
+<TabItem value="dart">
+
+Put every entry point behind `DevToolsGate.enabled`, a `const`:
+
+```dart
+// sample: dart-lib/example/lib/main.dart#devtools-entry
+void main() {
+  DevToolsGate.assertMatchesFlavor();
+  const app = ProviderScope(child: SinewExampleApp());
+  runApp(
+    DevToolsGate.enabled
+        ? const SinewDevTools(ribbon: BuildRibbon('Sinew example'), child: app)
+        : app,
+  );
+}
+```
+
+| Build | `enabled` |
+|---|---|
+| debug, any flavor | `true` |
+| release or profile, a non-production `SINEW_FLAVOR` | `true` |
+| release or profile, `SINEW_FLAVOR=production` | `false` |
+| release or profile, no `SINEW_FLAVOR` | `false`: a forgotten define fails safe |
+
+Build with `--dart-define=SINEW_FLAVOR=staging`. `assertMatchesFlavor` throws at startup if the define names another flavor than the one being run.
+
+</TabItem>
+</LangTabs>
+
+## Prove it
+
+Sinew's own CI does this for its sample and example, and you can do the same for your app:
+
+<LangTabs>
+<TabItem value="kotlin">
+
+Build the production outputs and search them for `com.srctool.sinew.devtools` names. Anything the no-op doesn't declare is real devtools code. Sinew's `checkDevToolsGating` task does this for the APK, the desktop jar, the wasm bundle and the iOS framework, and checks the real-devtools builds the other way, so a search that can't see devtools code fails instead of passing.
+
+</TabItem>
+<TabItem value="dart">
+
+`sinew_devtools_ui` contains one unique constant string, a marker. Build the production release and profile variants and search the compiled output (`libapp.so`, `App.framework`, `main.dart.js`, `main.dart.wasm`) for it. If it is there, devtools code survived. A staging build is checked the opposite way: the marker must be there. Sinew's `tool/devtools_gating.sh` does this.
+
+</TabItem>
+</LangTabs>
+
+## Good to know
+
+- Redaction hides secrets before anything is stored, but devtools are still not for production: the gate is the guarantee, redaction is the second line.
+- A tester's replay of a request that hid a secret is not offered, and a non-GET replay asks first.

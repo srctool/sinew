@@ -1,0 +1,39 @@
+---
+title: FAQ
+sidebar_label: FAQ
+sidebar_position: 2
+---
+
+# FAQ
+
+## Do I need Camouflage?
+
+No. Only `sinew-camouflage` / `sinew_camouflage` depends on it. Every other module works with any UI.
+
+## Can I use Sinew without Riverpod?
+
+Yes. `sinew_presentation` is plain Dart, and `sinew_riverpod` is the adapter. On Kotlin, `sinew-viewmodel` adapts the same pattern to AndroidX view models.
+
+## Does the devtools code reach my production app?
+
+No. On Android, the production release variant depends on the no-op artifact. On Flutter, a `const` gate removes it from the build. See [a production setup](/docs/guides/production-setup).
+
+## What backend JSON does Sinew expect?
+
+None. Sinew assumes no keys: your envelope subclass declares its backend's fields, and fills two optional hooks (a failure inside a 2xx body, and a success message) when the backend has them.
+
+## Which Android version is the minimum?
+
+`minSdk` 24 for the Kotlin modules.
+
+## Can I add my own errors?
+
+Yes. Subclass the base exception with a code and a message that don't start with Sinew's reserved prefixes, and a guard passes it through unchanged.
+
+## Why does `sinew_security` need CMake?
+
+Its cipher uses BoringSSL, compiled from source by Dart's native-assets build. Every machine that builds the app needs CMake on its `PATH`.
+
+## Where is the API reference?
+
+On Kotlin, attached to each [GitHub release](https://github.com/srctool/sinew-kotlin/releases). On Flutter, pub.dev builds it for each package.

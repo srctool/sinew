@@ -1,0 +1,38 @@
+---
+title: L10n
+sidebar_label: L10n
+sidebar_position: 3
+---
+
+# L10n
+
+`sinew-l10n` / `sinew_l10n`: English and Indonesian for the messages of Sinew's own failures.
+
+Every failure has a message key and an English fallback. This module translates those keys, so an error shown in the app follows the app's language.
+
+<LangTabs>
+<TabItem value="kotlin">
+
+The strings are Compose resources, in the module. Resolve a failure's key with a `Localizer` that reads them, and pass it to `displayMessage`; your own strings can answer first.
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+MaterialApp(
+  localizationsDelegates: SinewLocalizations.localizationsDelegates,
+  supportedLocales: SinewLocalizations.supportedLocales,
+  home: const Home(),
+);
+
+// in a build method
+final localizer = SinewLocalizer.of(context);
+Text(error.displayMessage(localizer));
+```
+
+Pass `appStrings:` to `SinewLocalizer.of` to translate your own error keys through the same localizer.
+
+</TabItem>
+</LangTabs>
+
+A key with no translation resolves to `null`, and the English fallback shows.

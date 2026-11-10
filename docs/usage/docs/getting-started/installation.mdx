@@ -1,0 +1,88 @@
+---
+title: Installation
+sidebar_label: Installation
+---
+
+# Installation
+
+Sinew is a set of small packages. Add the ones you need; every one is released at the same version.
+
+## Requirements
+
+| | Kotlin | Dart |
+|---|---|---|
+| Language | Kotlin 2.4, JDK 17 | Dart 3.13 |
+| Platforms | Android (`minSdk` 24), iOS, JVM desktop, wasm | Android, iOS, web, macOS, Windows, Linux |
+| Tools | Xcode for iOS | Flutter 3.47, and CMake for `sinew_security` |
+
+## Add the packages
+
+<LangTabs>
+<TabItem value="kotlin">
+
+Add the BOM once, then the modules you need, with no versions:
+
+```kotlin
+dependencies {
+    implementation(platform("com.srctool.sinew:sinew-bom:1.0.0"))
+    implementation("com.srctool.sinew:sinew-models")
+    implementation("com.srctool.sinew:sinew-exception")
+    implementation("com.srctool.sinew:sinew-network")
+    implementation("com.srctool.sinew:sinew-paging")
+    implementation("com.srctool.sinew:sinew-viewmodel")
+    testImplementation("com.srctool.sinew:sinew-testing")
+}
+```
+
+In a Kotlin Multiplatform module, put the same lines in the `commonMain` dependencies. `sinew-testing` belongs in tests only.
+
+</TabItem>
+<TabItem value="dart">
+
+```sh
+flutter pub add sinew_models sinew_exception sinew_network sinew_paging sinew_riverpod
+flutter pub add --dev sinew_testing
+```
+
+`sinew_models`, `sinew_exception`, `sinew_paging` and `sinew_presentation` are plain Dart and also work in a Dart-only project (`dart pub add`). `sinew_testing` belongs in `dev_dependencies` only.
+
+</TabItem>
+</LangTabs>
+
+:::note[Sinew's own dependency on Camouflage]
+
+Only `sinew-camouflage` (`sinew_camouflage`) depends on [Camouflage](https://github.com/srctool/camouflage). Leave it out and you never see Camouflage.
+
+:::
+
+## Developer tools: one artifact per build
+
+Devtools never reach a production build. The app chooses, per build:
+
+<LangTabs>
+<TabItem value="kotlin">
+
+On Android, each variant is given one artifact, and a new variant has to choose:
+
+```kotlin
+// sample: kotlin-lib/sample/androidApp/build.gradle.kts#devtools-variants
+"productionDebugImplementation"(projects.sinewDevtoolsUi)
+"stagingImplementation"(projects.sinewDevtoolsUi)
+"productionReleaseImplementation"(projects.sinewDevtoolsNoop)
+```
+
+On iOS, desktop and web, the convention is a Gradle property that picks the artifact (the sample uses `-Psinew.devtools=true` for the real one, and the no-op without it), so a build that forgets it fails safe.
+
+</TabItem>
+<TabItem value="dart">
+
+There is no separate artifact: both packages are in `pubspec.yaml`, and a `const` removes them from a production build. Build a staging release with `--dart-define=SINEW_FLAVOR=staging`; a production build, or one with no define, has none. See [the production guide](/docs/guides/production-setup).
+
+</TabItem>
+</LangTabs>
+
+## Platform setup
+
+- **`sinew_security` on Flutter** compiles BoringSSL for `webcrypto`, so every machine that builds the app needs **CMake** on its `PATH`. The first build per platform takes a minute or two longer.
+- **Biometrics** need a little native setup on each platform: see [Security](/docs/modules/security).
+- **Secure storage** on macOS needs the Keychain Sharing entitlement.

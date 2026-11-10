@@ -1,0 +1,45 @@
+---
+title: Using Sinew
+sidebar_label: Using Sinew
+sidebar_position: 1
+---
+
+# Using Sinew
+
+Sinew is a plug-and-play app architecture for **Kotlin Multiplatform** and **Flutter**. It ships the plumbing every app rewrites (response mapping, results, a coded and localized error model, paging, presentation base classes, an HTTP client with token refresh, secure storage and developer tools) as small packages you add one by one. Sinew ships the mechanism; your app ships the configuration.
+
+These docs are for developers **using** Sinew in an app: adding the packages, wiring them, and building a screen on them. Every sample has a Kotlin and a Dart version; the language switch in the sidebar changes them all.
+
+:::info[1.0 is being released]
+
+The first release, 1.0.0, is in preparation. The snippets here use `1.0.0`; until it is on Maven Central and pub.dev, build from source. The API they show is the one being released.
+
+:::
+
+## Start here
+
+| | |
+|---|---|
+| [Installation](/docs/getting-started/installation) | Add the BOM or the packages, and choose devtools per build |
+| [Quick start](/docs/getting-started/quick-start) | A list that pages, with its loading, error and retry states |
+| [How it fits together](/docs/concepts/how-it-fits-together) | The layers, and why a failure is translated once |
+| [Modules](/docs/modules) | One page per module: what it holds and how to use it |
+| [Guides](/docs/guides/testing) | Testing, a production setup, and paging with Camouflage |
+
+## What is in the box
+
+| Module | For |
+|---|---|
+| [Models](/docs/modules/models) | `Domain`, `Remote`, `Entity`, envelopes, `Result`, `ViewState` |
+| [Exception](/docs/modules/exception) | Typed failures with codes, guards, a crash reporter |
+| [L10n](/docs/modules/l10n) | The failures' messages in English and Indonesian |
+| [Paging](/docs/modules/paging) | `Pager`, `PagingState`, `LoadType` |
+| [Presentation](/docs/modules/presentation) | State and one-time effects, with a view model or a notifier |
+| [Network](/docs/modules/network) | An HTTP client with auth, token refresh, retry and polling |
+| [Security](/docs/modules/security) | Field encryption and a biometric vault |
+| [Storage](/docs/modules/storage) | Preferences and secrets that fail with typed errors |
+| [Testing](/docs/modules/testing) | A fake for every interface |
+| [Camouflage](/docs/modules/camouflage) | Paging state for Camouflage's `CamoPagedList` |
+| [DevTools](/docs/modules/devtools) | An in-app inspector that never reaches production |
+
+Every module is released at one version, so any set of them fits together.

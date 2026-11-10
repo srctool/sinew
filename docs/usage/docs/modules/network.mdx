@@ -1,0 +1,94 @@
+---
+title: Network
+sidebar_label: Network
+sidebar_position: 6
+---
+
+# Network
+
+`sinew-network` / `sinew_network`: an HTTP client that handles what every app rewrites.
+
+## What it holds
+
+- `SinewHttp`: a client (Ktor on Kotlin, Dio on Flutter) with timeouts by method, JSON and language headers, auth, error bodies and logging, from one `SinewConfig`. Use the preset, or add only the pieces you need to your own client.
+- The auth layer: the token goes only to `baseUrl`'s host, outside the anonymous paths, with a **single** refresh for any number of concurrent 401s.
+- `processApiCall` and `processOptionalApiCall`: map an envelope to a `Result`, and every status to a typed exception.
+- `retryWithBackoff` and `poll`, `NetworkChecker`, and certificate pinning.
+
+## Create the client
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Network.kt#client
+fun ordersClient(tokenSource: TokenSource): HttpClient {
+    val config = SinewConfig(
+        baseUrl = "https://api.example.com/v1/",
+        locale = { "en" },
+        anonymousPaths = setOf("/auth/login"),
+    )
+    return SinewHttp.client(config, tokenSource)
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+final config = SinewConfig(
+  baseUrl: 'https://api.example.com/v1',
+  locale: () => 'en',
+  anonymousPaths: {'/auth/login'},
+);
+final dio = SinewHttp.dio(config, tokenSource);
+```
+
+</TabItem>
+</LangTabs>
+
+`locale` and the default headers are read on every request, so a language switch or a new device id applies to the next request without rebuilding the client.
+
+## Call an API
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Network.kt#api-call
+// Paths are relative to baseUrl, and every failure comes back as a typed SinewException.
+suspend fun cancel(client: HttpClient, id: String): Result<Order> =
+    processApiCall("ORD", "CANCEL") { client.post("orders/$id/cancel").body<OrderEnvelope>() }
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+Future<Result<Order>> cancel(String id) =>
+    processApiCall('ORD', 'CANCEL', () => api.cancel(id));
+```
+
+</TabItem>
+</LangTabs>
+
+## How a status becomes an exception
+
+| Response | Becomes |
+|---|---|
+| a request, connect or socket timeout | `RequestTimeOutException` |
+| no connection, DNS failure, connection refused or reset | `NoInternetConnectionException` |
+| 400 or 422 with field errors | `ValidationException` |
+| 401, 403, 404, 409 | `UnauthorizedException`, `ForbiddenException`, `NotFoundException`, `ConflictException` |
+| 429 | `RateLimitedException`, with the `Retry-After` wait |
+| 503, 504 / any other 5xx | `ServiceUnavailableException` / `ServerException` |
+| any other status, with a readable message / without | `ApiErrorException` / `UndefinedErrorResponseException` |
+| JSON that doesn't fit the model, or an envelope with no payload | `ParseException`, reported |
+
+A readable error-body message becomes the exception's server text; otherwise its type's local message is used. A TLS or certificate failure matches nothing and becomes a reported `UnexpectedException`: a security event, never "offline".
+
+## Good to know
+
+- API classes use paths **relative** to `baseUrl` (`get("orders")`): a leading `/` would replace its own path.
+- On sign-out, reset the auth layer and clear the token source, so nothing carries into the next session.
+- On Flutter with Riverpod, `sinew_riverpod_providers` provides the configured client, the token source and the stores, so you override only what differs.
