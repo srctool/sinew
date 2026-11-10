@@ -1,0 +1,18 @@
+---
+title: Testing
+sidebar_label: Testing
+sidebar_position: 9
+---
+
+# Testing
+
+`sinew-testing` / `sinew_testing`: a fake for every Sinew interface, so a test runs without a device, a network or a platform plugin, and fails the way the real thing fails. Add it to **tests only**; the dependency check fails any other use.
+
+## What it holds
+
+- `mockHttp`: a real Sinew client on a mock engine, with routes and recorded requests.
+- `ControlledFetch`: answer a pager's calls by hand, to test loading, retry and refresh in order.
+- `FakeKeyValueStore`, `FakeSecureStore`, `FakeFieldCipher`, `FakeBiometricVault`, `FakeTokenSource`, `FakeRefreshTokenStore`, `FakeNetworkChecker`, `FakeLocalizer`.
+- `RecordingCrashReporter` and a recording HTTP logger, to assert what was reported or logged.
+
+See [the testing guide](/docs/guides/testing) for them in use.

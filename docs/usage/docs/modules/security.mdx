@@ -1,0 +1,78 @@
+---
+title: Security
+sidebar_label: Security
+sidebar_position: 7
+---
+
+# Security
+
+`sinew-security` / `sinew_security`: field encryption and a biometric vault, on vetted crypto on every platform.
+
+Sinew never invents a cipher. Values are AES-256-GCM from vetted libraries (Tink, CryptoKit, Web Crypto, BoringSSL), with a fresh nonce for every value, and one layout on every platform.
+
+## Encrypt a field
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Storage.kt#cipher
+suspend fun sealAndOpen(platform: PlatformContext): String {
+    val cipher = FieldCipher.create(platform)
+    val sealed = cipher.encrypt("Alice", context = "customer:42")
+    return cipher.decrypt(sealed, context = "customer:42")
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+final cipher = await FieldCipher.create();
+final sealed = await cipher.encrypt('Alice', context: 'customer:42');
+final plain = await cipher.decrypt(sealed, context: 'customer:42');
+```
+
+</TabItem>
+</LangTabs>
+
+The `context` is bound to the value as associated data, so a value copied to another field doesn't decrypt. `rotateKey` adds a key, and old values still decrypt.
+
+## Unlock with a biometric
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Storage.kt#vault
+suspend fun offerBiometrics(platform: PlatformContext, refreshToken: String) {
+    val vault = BiometricVault.create(platform)
+    if (vault.availability() == BiometricAvailability.Available) {
+        vault.store(refreshToken, reason = "Sign in with biometrics next time")
+    }
+    println(vault.unlock(reason = "Sign in"))
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+final vault = BiometricVault.create();
+if (await vault.availability() == BiometricAvailability.available) {
+  await vault.store(refreshToken, reason: 'Sign in with biometrics next time');
+}
+final unlocked = await vault.unlock(reason: 'Sign in');
+```
+
+</TabItem>
+</LangTabs>
+
+A secret is released only by a real biometric match. Why it wasn't (cancelled, locked out, invalidated by a new enrollment) is a user outcome, not an error.
+
+## Platform setup
+
+- **Android:** the resumed activity must be a `FragmentActivity` (`FlutterFragmentActivity` on Flutter), since `BiometricPrompt` needs one; without it the vault reports that biometrics are unavailable. Exclude the shared-preferences files that hold the cipher's keyset and the vault's ciphertext from cloud backup and device transfer: a restored value can't be decrypted on a new device anyway.
+- **iOS:** `NSFaceIDUsageDescription` in `Info.plist`.
+- **Desktop and web:** the vault is unavailable, and `availability` says so.
+- **Flutter:** `sinew_security` builds BoringSSL, so every machine that builds the app needs CMake. On macOS, add the Keychain Sharing entitlement.

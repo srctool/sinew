@@ -1,0 +1,55 @@
+---
+title: Camouflage
+sidebar_label: Camouflage
+sidebar_position: 10
+---
+
+# Camouflage
+
+`sinew-camouflage` / `sinew_camouflage`: the glue between Sinew's paging and [Camouflage](https://github.com/srctool/camouflage), the component library.
+
+One call turns a `PagingState` into what `CamoPagedList` shows: the skeleton, the items, load more, retry, refresh and the end of the list. It is the only Sinew module that depends on Camouflage.
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+CamoPagedList(
+    state = state.orders.toCamo(),
+    itemKey = { it.id },
+    onLoadMore = { viewModel.onEvent(OrderListEvent.EndReached) },
+    onRetry = { viewModel.onEvent(OrderListEvent.RetryTapped) },
+    onRefresh = { viewModel.onEvent(OrderListEvent.Refreshed) },
+    item = { order, _ -> CamoListItem(order.title, supporting = order.status) },
+)
+```
+
+`toCamo()` uses Sinew's localizer for the current language. `toCamo(localizer)` takes your own.
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+CamoPagedList<Order>(
+  state: state.orders.toCamoOf(context),
+  itemKey: (order) => order.id,
+  onLoadMore: () => onEvent(const OrderListEndReached()),
+  onRetry: () => onEvent(const OrderListRetryTapped()),
+  onRefresh: () async => onEvent(const OrderListRefreshed()),
+  itemBuilder: (context, order, _) => CamoListItem(
+    headline: order.title,
+    supporting: order.status,
+  ),
+)
+```
+
+`toCamoOf(context)` uses Sinew's localizer for the context's locale. `toCamo(localizer)` takes your own.
+
+</TabItem>
+</LangTabs>
+
+## Good to know
+
+- Only a next-page load or failure keeps the items. A refresh drops them, so the list shows its skeleton.
+- An error's text is rendered when you build the UI, so it follows the current language.
+- `sinew-camouflage` declares the Camouflage version range it was tested with, so an app can't silently combine incompatible versions.

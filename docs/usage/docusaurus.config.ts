@@ -37,7 +37,20 @@ const config: Config = {
   markdown: {
     mermaid: true,
   },
-  themes: ['@docusaurus/theme-mermaid'],
+  themes: [
+    '@docusaurus/theme-mermaid',
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        // Search runs in the browser over an index built at build time; no service to run.
+        hashed: true,
+        indexBlog: false,
+        docsRouteBasePath: '/docs',
+        highlightSearchTermsOnTargetPage: true,
+        explicitSearchResultPath: true,
+      },
+    ],
+  ],
 
   i18n: {
     defaultLocale: 'en',
@@ -96,7 +109,11 @@ const config: Config = {
       links: [
         {
           title: 'Docs',
-          items: [{label: 'Introduction', to: '/docs'}],
+          items: [
+            {label: 'Introduction', to: '/docs'},
+            {label: 'Quick start', to: '/docs/getting-started/quick-start'},
+            {label: 'Modules', to: '/docs/modules'},
+          ],
         },
         {
           title: 'Platform',

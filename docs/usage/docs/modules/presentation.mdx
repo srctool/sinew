@@ -1,0 +1,77 @@
+---
+title: Presentation
+sidebar_label: Presentation
+sidebar_position: 5
+---
+
+# Presentation
+
+`sinew-presentation` and `sinew-viewmodel` on Kotlin; `sinew_presentation` and `sinew_riverpod` on Flutter.
+
+A page has **state** (what it renders) and **effects** (one-time reactions), and effects are never state. `sinew-presentation` holds the pattern with no framework; the other module adapts it to a view model or a notifier.
+
+## What it holds
+
+- `StateEffectHandler`: a page with one intent. `setState`, `emitEffect`, and a stream of each.
+- `EventActionHandler`: a page with several intents. The page sends events, a pure `mapEventToAction` decides the work, and `onAction` does it.
+- On Kotlin, `StateEffectViewModel` and `EventActionViewModel` are the same on an AndroidX `ViewModel`, which survives rotation. On Flutter, `StateEffectNotifier` and `EventActionNotifier` are mixins on a Riverpod `Notifier`.
+
+## A page with one intent
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Presentation.kt#counter
+data class CounterState(val count: Int = 0)
+
+/** A one-time reaction: never state, so a rebuild can't repeat it. */
+data object ReachedTen
+
+class CounterViewModel : StateEffectViewModel<CounterState, ReachedTen>(CounterState()) {
+    fun increment() {
+        setState { copy(count = count + 1) }
+        if (state.value.count == 10) emitEffect(ReachedTen)
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_presentation/example/main.dart#counter
+/// The state a page renders.
+final class CounterState {
+  const CounterState(this.count);
+
+  final int count;
+}
+
+/// A one-time reaction: never state, so a rebuild can't repeat it.
+final class ReachedTen {
+  const ReachedTen();
+}
+
+/// A page with one intent: state in, state and effects out.
+final class Counter extends StateEffectHandler<CounterState, ReachedTen> {
+  Counter() : super(const CounterState(0));
+
+  void increment() {
+    setState((state) => CounterState(state.count + 1));
+    if (state.count == 10) emitEffect(const ReachedTen());
+  }
+}
+```
+
+</TabItem>
+</LangTabs>
+
+For a page with several intents, see the event and action version in the [quick start](/docs/getting-started/quick-start).
+
+## Good to know
+
+- `mapEventToAction` is pure: it reads state and returns the work, or `null` for none right now. Work that must not overlap is guarded there, by reading state.
+- `onAction` isn't awaited by `onEvent`, so actions may run concurrently. A throw in it is a bug and reaches the platform's error handler.
+- Clearing a view model, or disposing a provider, closes the effects. Late work then changes nothing.
+- On Flutter, `useOnOpened` sends "the page opened" once, after the first build, and `useEffects` listens to effects while the page is mounted.

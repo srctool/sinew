@@ -1,0 +1,65 @@
+---
+title: Storage
+sidebar_label: Storage
+sidebar_position: 8
+---
+
+# Storage
+
+`sinew-storage` / `sinew_storage`: local storage with the same error model as the network.
+
+A corrupted file, a full disk or an unreadable value becomes a typed exception instead of a crash, and a reinstall starts with an empty secure store.
+
+## What it holds
+
+- `KeyValueStore`: plain preferences, namespaced by name. Never tokens or personal data.
+- `SecureStore`: small secrets, encrypted with `FieldCipher`. A value that can't be decrypted reads as absent, and is deleted.
+- `processStorageCall`: the guard that makes storage failures typed.
+- `pagedQuery`: a local list that pages like a remote one.
+
+## Use the stores
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Storage.kt#stores
+suspend fun remember(platform: PlatformContext, refreshToken: String) {
+    val prefs = KeyValueStore.create(platform, name = "orders")
+    prefs.setString("theme", "dark")
+    val theme = prefs.getString("theme") // null when missing or written as another type
+
+    val secrets = SecureStore.create(platform)
+    secrets.write("refreshToken", refreshToken)
+    println("theme: $theme, token stored: ${secrets.read("refreshToken") != null}")
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+final prefs = KeyValueStore.create(name: 'orders');
+await prefs.setString('theme', 'dark');
+final theme = await prefs.getString('theme'); // null when missing or of another type
+
+final secrets = await SecureStore.create();
+await secrets.write('refreshToken', token);
+```
+
+</TabItem>
+</LangTabs>
+
+## Failures
+
+| Failure | Becomes |
+|---|---|
+| a corrupted file, an undecryptable value | `LocalStorageCorruptionException` |
+| the device is out of space | `StorageFullException` |
+| any other storage error | `StorageReadException` or `StorageWriteException` |
+
+## Good to know
+
+- A value read as another type than it was written is absent, as is a missing one.
+- On sign-out, call `clearUserData` on the `SecureStore`.
+- A reinstall starts empty on every platform: the values go with the app, even where the key survives (the iOS Keychain).

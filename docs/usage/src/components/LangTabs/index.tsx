@@ -1,61 +1,68 @@
-import React, {useEffect, useMemo, useState} from 'react';
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
+import React, {useEffect, useState} from 'react';
 import {getPreferredLang, setPreferredLang, Lang} from '../LanguageSwitcher';
 
-// Wrapper over Docusaurus Tabs that syncs selected tab with global preference
+// Kotlin and Dart tabs driven by the site-wide language preference (the sidebar switcher, the home
+// page menu and every tab group on the page share it). Docusaurus' own <Tabs> keeps a selection of
+// its own and ignores changes to defaultValue, so it can't follow the switcher; this one is
+// controlled by the preference instead.
+//
 // Usage in MDX:
 // <LangTabs>
-//   <TabItem value="kotlin" label="Kotlin">
-//     ```kotlin
-//     // code here
-//     ```
-//   </TabItem>
-//   <TabItem value="dart" label="Dart">
-//     ```dart
-//     // code here
-//     ```
-//   </TabItem>
+//   <TabItem value="kotlin"> ```kotlin ... ``` </TabItem>
+//   <TabItem value="dart"> ```dart ... ``` </TabItem>
 // </LangTabs>
-const LangTabs: React.FC<React.PropsWithChildren<{groupId?: string}>> = ({children, groupId = 'code-lang'}) => {
-  const [value, setValue] = useState<Lang>(getPreferredLang());
 
-  // Keep in sync with global preference changes
+const LABELS: Record<Lang, string> = {kotlin: 'Kotlin', dart: 'Dart'};
+
+// A marker component: LangTabs reads its `value` and renders its children for the selected language.
+export const TabItem: React.FC<React.PropsWithChildren<{value: Lang; label?: string}>> = ({children}) => <>{children}</>;
+
+const LangTabs: React.FC<React.PropsWithChildren> = ({children}) => {
+  // Start from Kotlin on the server and the first client render, then read the saved choice, so the
+  // markup matches during hydration.
+  const [lang, setLang] = useState<Lang>('kotlin');
+
   useEffect(() => {
-    const handler = (e: any) => {
-      const next = e?.detail?.lang as Lang | undefined;
-      if (next && next !== value) setValue(next);
+    setLang(getPreferredLang());
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent).detail?.lang as Lang | undefined;
+      if (next) setLang(next);
     };
     window.addEventListener('sinew:langChange', handler);
     return () => window.removeEventListener('sinew:langChange', handler);
-  }, [value]);
+  }, []);
 
-  // When user switches tab, persist preference
-  const onChange = (nextVal: string) => {
-    const next = (nextVal === 'dart' ? 'dart' : 'kotlin') as Lang;
-    setValue(next);
-    setPreferredLang(next);
-  };
-
-  // Ensure we only pass TabItems with our 2 values
-  const processedChildren = useMemo(() => {
-    return React.Children.toArray(children).filter(Boolean) as React.ReactElement[];
-  }, [children]);
+  const items = React.Children.toArray(children).filter(Boolean) as React.ReactElement<{value: Lang}>[];
+  const available = items.map((item) => item.props.value);
+  // A group with only one language shows it whatever is selected.
+  const shown = available.includes(lang) ? lang : available[0];
 
   return (
-    <Tabs
-      groupId={groupId}
-      values={[
-        {label: 'Kotlin', value: 'kotlin'},
-        {label: 'Dart', value: 'dart'},
-      ]}
-      defaultValue={value}
-      onChange={({value: v}) => onChange(v)}
-    >
-      {processedChildren}
-    </Tabs>
+    <div className="lang-tabs">
+      <ul className="tabs" role="tablist" aria-label="Language">
+        {available.map((value) => (
+          <li
+            key={value}
+            role="tab"
+            tabIndex={value === shown ? 0 : -1}
+            aria-selected={value === shown}
+            className={value === shown ? 'tabs__item tabs__item--active' : 'tabs__item'}
+            onClick={() => setPreferredLang(value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setPreferredLang(value);
+              }
+            }}>
+            {LABELS[value]}
+          </li>
+        ))}
+      </ul>
+      <div role="tabpanel" className="margin-top--md">
+        {items.filter((item) => item.props.value === shown)}
+      </div>
+    </div>
   );
 };
 
-export {TabItem};
 export default LangTabs;

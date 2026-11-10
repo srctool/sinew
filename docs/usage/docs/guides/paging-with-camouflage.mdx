@@ -1,0 +1,96 @@
+---
+title: Paging with Camouflage
+sidebar_label: Paging with Camouflage
+sidebar_position: 3
+---
+
+# Paging with Camouflage
+
+[Camouflage](https://github.com/srctool/camouflage) is the component library that Sinew's paging was designed to meet. `CamoPagedList` shows a list with every state of a paged load; `sinew-camouflage` maps Sinew's `PagingState` to it.
+
+## The mapping
+
+| `PagingState` | The list shows |
+|---|---|
+| loading the first page (`Initial`) | a skeleton, with no items |
+| loading a refresh (`Refresh`) | a skeleton: a refresh drops the items |
+| loading the next page (`More`) | the items so far, and the next page loading |
+| done, with a next page | the items |
+| done, with no next page | the items, and the end of the list |
+| failed on the next page | the items so far, and a next-page error with retry |
+| failed on the first page or a refresh | the error with retry, and no items |
+
+## Wire it
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/shared/src/commonMain/kotlin/com/srctool/sinew/sample/OrderListScreen.kt#screen
+@Composable
+fun OrderListScreen(viewModel: OrderListViewModel) {
+    val state by viewModel.state.collectAsState()
+    LaunchedEffect(viewModel) { viewModel.onEvent(OrderListEvent.Opened) }
+    Column(Modifier.fillMaxSize().background(Camouflage.colors.surface).safeDrawingPadding()) {
+        CamoButton("Refresh", onClick = { viewModel.onEvent(OrderListEvent.Refreshed) }, modifier = Modifier.padding(8.dp))
+        CamoPagedList(
+            state = state.orders.toCamo(),
+            itemKey = { it.id },
+            onLoadMore = { viewModel.onEvent(OrderListEvent.EndReached) },
+            onRetry = { viewModel.onEvent(OrderListEvent.RetryTapped) },
+            onRefresh = { viewModel.onEvent(OrderListEvent.Refreshed) },
+            item = { order, _ -> CamoListItem(order.title, supporting = order.status) },
+            modifier = Modifier.weight(1f).testTag("orders"),
+        )
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/example/lib/orders/order_list_screen.dart#screen
+Widget build(BuildContext context) {
+  final state = ref.watch(orderListProvider);
+  return ColoredBox(
+    color: Camouflage.colorsOf(context).surface,
+    child: SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: CamoButton(
+              text: 'Refresh',
+              onPressed: () => _onEvent(const OrderListRefreshed()),
+            ),
+          ),
+          Expanded(
+            child: CamoPagedList<Order>(
+              state: state.orders.toCamoOf(context),
+              itemKey: (order) => order.id,
+              onLoadMore: () => _onEvent(const OrderListEndReached()),
+              onRetry: () => _onEvent(const OrderListRetryTapped()),
+              onRefresh: () async => _onEvent(const OrderListRefreshed()),
+              itemBuilder: (context, order, _) => CamoListItem(
+                headline: order.title,
+                supporting: order.status,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+```
+
+</TabItem>
+</LangTabs>
+
+## Good to know
+
+- The error text is rendered while you build the UI, with the current language: a language switch updates it.
+- Without a localizer, a local message falls back to English.
+- This is the only place Sinew touches Camouflage. If you use another component library, map `PagingState` to it the same way: `canLoadMore`, `retryType` and the view state carry everything you need.

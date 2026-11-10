@@ -1,0 +1,117 @@
+---
+title: Models
+sidebar_label: Models
+sidebar_position: 1
+---
+
+# Models
+
+`sinew-models` / `sinew_models`: the shapes every Sinew app shares.
+
+## What it holds
+
+- `Domain`, `Remote` and `Entity`, kept apart so a backend that renames a field touches one file.
+- Envelope bases (`ObjectEnvelope`, `ListEnvelope`, `PagedEnvelope`, `VoidEnvelope`) that map any backend's body to one domain shape, and report a failure inside a 2xx body.
+- `Result`: a `Success` with the backend's message, or a typed `Failure`.
+- `ViewState`: `Loading`, `Done` and `Failed`, where `Loading` and `Failed` can keep the previous data.
+- `PagingDomain` and `PagingMetaDomain`: one page shape for every backend.
+
+## Map a body to the domain
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Models.kt#models
+/** What the app needs, in business language. */
+data class Order(val id: Int, val title: String) : Domain
+
+/** What the backend sends, shaped like its JSON. */
+@Serializable
+class OrderRemote(val id: Int, val title: String) : Remote<Order>() {
+    override fun toDomain() = Order(id, title)
+}
+
+/** A response body: one order under `data`. */
+@Serializable
+class OrderEnvelope(override val data: OrderRemote? = null) : ObjectEnvelope<OrderRemote, Order>()
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_models/example/main.dart#models
+/// What the app needs, in business language.
+final class Order extends Domain {
+  const Order(this.id, this.title);
+
+  final int id;
+  final String title;
+
+  @override
+  List<Object?> get props => [id, title];
+
+  @override
+  String toString() => 'Order($id, $title)';
+}
+
+/// What the backend sends, shaped like its JSON.
+final class OrderRemote extends Remote<Order> {
+  const OrderRemote(this.id, this.title);
+
+  final int id;
+  final String title;
+
+  @override
+  Order toDomain() => Order(id, title);
+}
+
+/// A response body: one order under `data`.
+final class OrderEnvelope extends ObjectEnvelope<OrderRemote, Order> {
+  const OrderEnvelope(this.data);
+
+  @override
+  final OrderRemote? data;
+}
+```
+
+</TabItem>
+</LangTabs>
+
+Sinew assumes no JSON keys: your envelope subclass declares its backend's fields. An object envelope's `toDomain` fails with a parse error when its `data` is absent; a list envelope maps an absent list to an empty one.
+
+## Read a `Result`
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Models.kt#result
+fun describe(result: Result<Order>): String = result.fold(
+    onSuccess = { order -> "Loaded ${order.title}" },
+    onFailure = { error -> "Failed: ${error.code}" },
+)
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_models/example/main.dart#result
+// A Result is a success or a failure, never both: read it with `when`.
+final text = result.when(
+  success: (order, message) => 'Loaded $order',
+  failure: (error, stackTrace) => 'Failed: ${error.code}',
+);
+print(text);
+```
+
+</TabItem>
+</LangTabs>
+
+## Good to know
+
+- `ViewState` keeps no success message: a one-time reaction is an **effect**, never state.
+- A `Failed` state keeps the exception, never pre-rendered text, so a language switch re-renders it.
+- On Kotlin, a generic envelope (`PagedResponse<OrderRemote, Order>`) needs a serializer for its domain type argument, though the domain is never parsed: declare one with `DomainNotParsed`.
