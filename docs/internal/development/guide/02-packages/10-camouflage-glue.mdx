@@ -63,11 +63,9 @@ CamoPagedList(
 
 `sinew_camouflage` is released in Sinew's lockstep, and declares the Camouflage version range it was tested with. A Camouflage release that changes `CamoPagedListState` needs a new `sinew_camouflage` release. Nothing else in Sinew is affected.
 
-##### Before Camouflage publishes
+##### Camouflage's releases
 
-Camouflage reaches Maven Central and pub.dev at its M15 (v0.1), after Sinew's S5. Until then, `sinew_camouflage` builds against Camouflage's source at a pinned commit, and it can't be released: a published package can't depend on source. So this blocks Sinew's 1.0 release, not S5.
-
-Before S7's release, replace the pin with the published Camouflage version on each platform, as that platform's note says.
+Camouflage published v0.1 on 2026-11-07 (Maven Central 0.1.0; pub.dev 0.1.0, then 0.1.1 on 2026-11-09 for every package, with 0.1.2 for two skins Sinew doesn't use). Through S5 and S6 Sinew built against Camouflage's source at a pinned commit, since a published package can't depend on source. In S7, before the release, each platform moved to the published version, as that platform's note says. Only `sinew_camouflage` depends on `camouflage_core`, and only the sample and the example depend on the Minimal skin.
 
 ### 3. API
 
@@ -91,7 +89,7 @@ Before S7's release, replace the pin with the published Camouflage version on ea
 | Case | Decided behavior |
 |---|---|
 | A Camouflage release changes `CamoPagedListState` | Only `sinew_camouflage` changes, in a new Sinew lockstep release. Its declared version range stops apps from mixing incompatible versions. |
-| Sinew's 1.0 release comes up before Camouflage has published | The release waits. `sinew_camouflage` can't ship pinned to source, and Sinew's packages release in lockstep. |
+| A Camouflage patch release | Dart: the `^0.1.1` range takes it. Kotlin: the version in `gradle/camouflage.versions.toml` is raised in an ordinary PR. Either way the glue's tests run against it first. |
 | An empty first page | `Done([])` → `items = []`, `loading = None`, `endReached = true` (an empty page has no next page). `CamoPagedList` shows its empty state. |
 | A `Done` state whose meta says there's a next page but the list is shorter than the screen | `CamoPagedList` fires `onLoadMore` right away, and the pager loads the next page. |
 | The app doesn't use Sinew's `Localizer` | It passes `null`: messages fall back to the English fallback or the server text. |
@@ -156,7 +154,7 @@ CamoPagedList(
 | Case | Decided behavior |
 |---|---|
 | Camouflage's `PagedErrorScope` naming differs in the released API | The glue follows Camouflage's released names. Only this file changes. |
-| Camouflage isn't published yet | `third_party/camouflage-kotlin` is a Git submodule at a pinned commit, and `settings.gradle.kts` includes it as a composite build, so Gradle builds `camouflage-core`, and the sample's `camouflage-skin-minimal`, from source for only the targets it needs. Clone with `--recurse-submodules`. Before 1.0: set the released version in `gradle/camouflage.versions.toml`, remove the submodule and its `includeBuild`, and remove `submodules: true` from CI. `publish.yml` doesn't check out the submodule, so a release fails until then instead of publishing a snapshot dependency. |
+| Camouflage's version | `gradle/camouflage.versions.toml` holds the released version (`0.1.0`), which Gradle resolves from Maven Central: `camouflage-core` for `sinew-camouflage`, and `camouflage-skin-minimal` for the sample. Nothing else depends on it. |
 
 :::info[Decided by default (revisit during implementation)]
 
@@ -221,7 +219,7 @@ CamoPagedList<Order>(
 | Case | Decided behavior |
 |---|---|
 | Camouflage renames a type in its released API | Only this file changes, in the next Sinew release. |
-| Camouflage isn't published yet | `sinew_camouflage`'s `pubspec.yaml` has a `git` dependency on `camouflage_core` at a pinned commit, and `publish_to: none`, since pub.dev rejects git dependencies. Camouflage's own packages depend on `camouflage_core` by version, so the workspace's `pubspec.yaml` also overrides it to the same commit, and the example pins `camouflage_skin_minimal` the same way. Before 1.0: replace these with the published version range and remove `publish_to` and the override. |
+| Camouflage's version | `sinew_camouflage` depends on `camouflage_core: ^0.1.1` and the example on `camouflage_skin_minimal: ^0.1.1`, both from pub.dev. The glue uses nothing newer than 0.1.0; `^0.1.1` is the first release with the accessibility fixes and full documentation. No override is needed: Camouflage's own packages depend on `camouflage_core` by version. |
 
 :::info[Decided by default (revisit during implementation)]
 
