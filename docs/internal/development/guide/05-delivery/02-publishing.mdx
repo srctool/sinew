@@ -51,7 +51,8 @@ implementation("com.srctool.sinew:sinew-paging")
 The `com.srctool.publish` convention plugin (vanniktech 0.37.0 + Dokka + signing) configures:
 - coordinates;
 - the POM (name, description, license Apache 2.0, the `srctool/sinew-kotlin` SCM URL, developer `srctool`);
-- signing with an in-memory PGP key.
+- signing with an in-memory PGP key;
+- Dokka on every Kotlin library module: `./gradlew dokkaGenerate` writes one HTML folder per module, with `reportUndocumented` and `failOnWarning` on, so an undocumented public declaration or a broken `[link]` in a doc fails the build.
 
 Secrets in CI: `ORG_GRADLE_PROJECT_mavenCentralUsername` / `…Password` (a Central Portal user token), `ORG_GRADLE_PROJECT_signingInMemoryKey`, `…KeyPassword`.
 
@@ -60,7 +61,7 @@ Secrets in CI: `ORG_GRADLE_PROJECT_mavenCentralUsername` / `…Password` (a Cent
 1. Verify the `com.srctool` namespace on the Central Portal (a DNS TXT record on `srctool.com`).
 2. Apply `com.srctool.publish` to every library module and the BOM.
 3. A dry run: `./gradlew publishToMavenLocal`, then build the sample app against `mavenLocal()` with the BOM.
-4. The publish workflow: on a `v*` tag, on macOS, `./gradlew publishAndReleaseToMavenCentral`.
+4. The publish workflow: on a `v*` tag, on macOS, builds the API reference (`dokkaGenerate`), then runs `./gradlew publishAndReleaseToMavenCentral`, then attaches `sinew-kotlin-api-<version>.zip` to the GitHub Release.
 5. A changelog per release, shared by all modules.
 
 **Done when**
