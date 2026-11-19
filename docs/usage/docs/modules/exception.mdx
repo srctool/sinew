@@ -13,6 +13,7 @@ sidebar_position: 2
 - Built-in types for connectivity, HTTP statuses, parsing, storage and polling: `NoInternetConnectionException`, `ValidationException`, `UnauthorizedException`, `NotFoundException`, `ServerException`, `ParseException`, `StorageFullException` and more. Each has a short **type code**.
 - `processCall` and `processUseCase`: guards that turn whatever a block throws into a `Result`.
 - `ExceptionHandler`: one rule in a guard's list, "is this a timeout?" and "make this exception for this call".
+- `ExceptionLayer`: where a failure came from, a short code in its `code`: `R` repository, `UC` use case, `VM` view model or notifier, `UT` utility, and `SV` for an [app service](/docs/modules/presentation#app-services).
 - `CrashReporter`: where bugs (unexpected and parse failures) are reported.
 - `Localizer` and `displayMessage`: the text a page shows.
 
@@ -111,3 +112,4 @@ CrashReporter.install(MyReporter()); // once, at the composition root
 
 - The codes and the `sinew.` key prefix are reserved. Your own exceptions use other codes and keys.
 - Validation field messages are shown beside their fields, without a code.
+- Pick the layer of the guard you write: a repository uses `Repository`, a use case `UseCase`, and an app service guards its steps with `ExceptionLayer.Service` (Dart: `ExceptionLayer.service`), so its bugs read `MODULE-SV-FUNCTION-TYPE`.
