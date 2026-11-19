@@ -14,6 +14,7 @@ A page has **state** (what it renders) and **effects** (one-time reactions), and
 
 - `StateEffectHandler`: a page with one intent. `setState`, `emitEffect`, and a stream of each.
 - `EventActionHandler`: a page with several intents. The page sends events, a pure `mapEventToAction` decides the work, and `onAction` does it.
+- `AppService` and `AppServiceHost`: work that lives with the app or the signed-in session and has no screen (a purchase from the store, a pub/sub message, a push). See [App services](#app-services).
 - On Kotlin, `StateEffectViewModel` and `EventActionViewModel` are the same on an AndroidX `ViewModel`, which survives rotation. On Flutter, `StateEffectNotifier` and `EventActionNotifier` are mixins on a Riverpod `Notifier`.
 
 ## A page with one intent
@@ -69,9 +70,173 @@ final class Counter extends StateEffectHandler<CounterState, ReachedTen> {
 
 For a page with several intents, see the event and action version in the [quick start](/docs/getting-started/quick-start).
 
+## App services {#app-services}
+
+Some work isn't tied to a page: a purchase can arrive from the store at any time, with or without a screen open. A page handler can't own that, because it lives only as long as its page. An **app service** is the second kind of driver. Like a page handler it calls use cases and folds their `Result`, but it lives for the app or for the signed-in session, and it has no UI.
+
+A service has three steps. `init` catches up on what happened while the app wasn't running, once per start and before `listen`. `listen` subscribes to the sources. `destroy` stops and releases. Guard each step with the **service layer**, so a bug in one is reported with an `SV` code (here `BIL-SV-INIT-GEN`).
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Presentation.kt#app-service
+/** Work with the app's lifetime and no UI: purchases arrive from the store at any time, with or without a screen. */
+class BillingService(
+    private val store: PurchaseStore,
+    private val acknowledge: AcknowledgePurchase,
+) : AppService(ServiceLifetime.App) {
+
+    /** Catches up first, before [listen] subscribes. A bug here is reported as `BIL-SV-INIT-GEN`. */
+    override suspend fun init() {
+        processResult("BIL", "INIT", ExceptionLayer.Service) {
+            store.unacknowledged().forEach { acknowledge(it) }
+        }
+    }
+
+    override fun listen(scope: CoroutineScope) {
+        scope.launch {
+            store.arrivals.collect { purchase ->
+                processResult("BIL", "LISTEN", ExceptionLayer.Service) { acknowledge(purchase) }
+            }
+        }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_presentation/example/main.dart#app-service
+/// Work with the app's lifetime and no UI: purchases arrive from the store at any time, with or without a screen.
+final class BillingService extends AppService {
+  BillingService(this.store, this.acknowledge) : super(ServiceLifetime.app);
+
+  final PurchaseStore store;
+  final AcknowledgePurchase acknowledge;
+  StreamSubscription<Purchase>? _arrivals;
+
+  /// Catches up first, before [listen] subscribes. A bug here is reported as `BIL-SV-INIT-GEN`.
+  @override
+  Future<void> init() async {
+    await processCall<void>(
+      'BIL',
+      'INIT',
+      ExceptionLayer.service,
+      const [],
+      () async {
+        for (final purchase in await store.unacknowledged()) {
+          await acknowledge(purchase);
+        }
+      },
+    );
+  }
+
+  @override
+  void listen() {
+    _arrivals = store.arrivals.listen((purchase) async {
+      await processCall<void>(
+        'BIL',
+        'LISTEN',
+        ExceptionLayer.service,
+        const [],
+        () => acknowledge(purchase),
+      );
+    });
+  }
+
+  @override
+  Future<void> destroy() async => _arrivals?.cancel();
+}
+```
+
+</TabItem>
+</LangTabs>
+
+An `AppServiceHost` starts and stops the services. Build it once at app start; `startApp` runs `init` then `listen` for the app-scope services in list order, and the session owner calls `startSession` after sign-in and `stopSession` after sign-out.
+
+<LangTabs>
+<TabItem value="kotlin">
+
+```kotlin
+// sample: kotlin-lib/sample/docs/src/main/kotlin/com/srctool/sinew/docs/Presentation.kt#app-service-host
+/** Built once at app start, with the scope that outlives every screen. */
+fun appServices(store: PurchaseStore, acknowledge: AcknowledgePurchase) = AppServiceHost(
+    appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    services = listOf(BillingService(store, acknowledge)),
+)
+
+/** App services start at launch, session services at sign-in and stop at sign-out. */
+class AppLifecycle(private val services: AppServiceHost) {
+    fun launched() = services.startApp()
+    fun signedIn() = services.startSession()
+    suspend fun signedOut() = services.stopSession()
+}
+```
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_presentation/example/main.dart#app-service-host
+/// Built once in `main()`, before `runApp`, and kept for the life of the app.
+AppServiceHost appServices(
+  PurchaseStore store,
+  AcknowledgePurchase acknowledge,
+) => AppServiceHost([BillingService(store, acknowledge)]);
+
+/// App services start at launch, session services at sign-in and stop at sign-out.
+final class AppLifecycle {
+  AppLifecycle(this.services);
+
+  final AppServiceHost services;
+
+  Future<void> launched() => services.startApp();
+
+  Future<void> signedIn() => services.startSession();
+
+  Future<void> signedOut() => services.stopSession();
+}
+```
+
+</TabItem>
+</LangTabs>
+
+On Flutter with Riverpod, `sinew_riverpod_providers` holds the host: override `appServicesProvider` with your services, and read `appServiceHostProvider` once at startup, which starts the app services. Disposing the container destroys them.
+
+<LangTabs>
+<TabItem value="kotlin">
+
+Kotlin has no provider layer. Build the host once where the app starts (`Application.onCreate`, the iOS app's init) and keep it in your dependency container, as the sample above does.
+
+</TabItem>
+<TabItem value="dart">
+
+```dart
+// sample: dart-lib/packages/sinew_riverpod_providers/example/main.dart#app-services-provider
+// The app lists its services once; reading the host starts the app services.
+final container = ProviderContainer(
+  overrides: [
+    appServicesProvider.overrideWithValue([WelcomeService()]),
+  ],
+);
+final host = container.read(appServiceHostProvider);
+
+// The session owner starts the session services after sign-in and stops them at sign-out.
+await host.startSession();
+await host.stopSession();
+```
+
+</TabItem>
+</LangTabs>
+
 ## Good to know
 
 - `mapEventToAction` is pure: it reads state and returns the work, or `null` for none right now. Work that must not overlap is guarded there, by reading state.
 - `onAction` isn't awaited by `onEvent`, so actions may run concurrently. A throw in it is a bug and reaches the platform's error handler.
 - Clearing a view model, or disposing a provider, closes the effects. Late work then changes nothing.
 - On Flutter, `useOnOpened` sends "the page opened" once, after the first build, and `useEffects` listens to effects while the page is mounted.
+- A service guards its own steps. Whatever a step still throws never stops the other services, or that service from listening: it is reported as an unhandled error, like any bug.
+- A service's use cases are idempotent, because stores and push providers deliver the same event again. Pages never call or wait on a service: they observe the repository it writes to.
+- `stopSession` cancels a session service's `init` that is still running on Kotlin. Dart can't cancel an `await`, so there that service just never starts listening. A second `startSession` while a session runs does nothing.

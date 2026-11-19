@@ -11,6 +11,23 @@ Every module is released at one version, so one changelog covers a release. The 
 - [Sinew for Kotlin](https://github.com/srctool/sinew-kotlin/blob/main/CHANGELOG.md)
 - [Sinew for Dart and Flutter](https://github.com/srctool/sinew-dart/blob/main/CHANGELOG.md)
 
+## Releases
+
+### 1.1.0
+
+Adds **app services**: work with the app's or the signed-in session's lifetime and no UI (a purchase, pub/sub, a push). New public API, nothing removed.
+
+- `ExceptionLayer.Service` (Dart: `ExceptionLayer.service`), the `SV` layer, in `sinew-models` / `sinew_models`.
+- `AppService`, `ServiceLifetime` and `AppServiceHost` in `sinew-presentation` / `sinew_presentation`.
+- `appServicesProvider` and `appServiceHostProvider` in `sinew_riverpod_providers`, which now needs `sinew_presentation` 1.1.0.
+- Flutter 3.50 is supported: `sinew_devtools_ui` imports Material from `material_ui`.
+
+See [App services](/docs/modules/presentation#app-services).
+
+### 1.0.0
+
+The first release: every module on Maven Central and every package on pub.dev, at one version.
+
 :::info[Versioning]
 
 Sinew follows semantic versioning. A mistake in a released version is never deleted: it gets a patch release.
